@@ -31,6 +31,7 @@ from torch.optim.lr_scheduler import StepLR
 # models
 import models.cifar as models
 
+from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint
 
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
@@ -39,6 +40,9 @@ parser.add_argument('--train-batch', default=128, type=int, metavar='N',
                     help='train batchsize')
 parser.add_argument('--test-batch', default=100, type=int, metavar='N',
                     help='test batchsize')
+
+parser.add_argument('--train_end_to_end', action='store_true',
+                    help='train from router to experts')
 parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--router_epochs', type=int, default=50, metavar='N',
@@ -117,9 +121,6 @@ def doPlot(val_scores):
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
 
-classes = {'airplane': 0, 'automobile': 1, 'bird': 2, 'cat': 3,
-           'deer': 4, 'dog': 5, 'frog': 6, 'horse': 7, 'ship': 8, 'truck': 9}
-    
 
 
 def train(epoch, model, train_loader, optimizer): 
@@ -142,14 +143,8 @@ def train(epoch, model, train_loader, optimizer):
     
     return model, optimizer
 
-import shutil
 
-def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
-    filepath = os.path.join("checkpoint", filename)
-    print (filepath)
-    #torch.save(model_weights, filepath)
-    if is_best:
-        torch.save(model_weights, filepath)
+
         
 def test(model, test_loader, best_so_far, name, save_wts=False):
     model.eval()
@@ -182,11 +177,7 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         wts = copy.deepcopy(model.state_dict())
         name = name + ".pth.tar"
         save_checkpoint(wts, found_best, name)
-        print ("******* found new best *********")
         best_so_far = now_correct
-#        best_model_wts = copy.deepcopy(model.state_dict())
-#        torch.save(best_model_wts, './weights/routers_weights/tinynet_router_alpha_0p9_temp_10.pth.tar')
-#        torch.save(best_model_wts, './weights/experts_weights/expert_class_35_alpha_0p5_temp_0.pth.tar')
     return best_so_far
     
 
@@ -213,8 +204,7 @@ def calculate_matrix(model, test_loader_single, num_classes):
             break
      
     return freqMat
-    
-    
+
 
 def prepare_dataset_for_router():
     
@@ -251,9 +241,6 @@ def prepare_dataset_for_router():
     return trainloader, testloader, num_classes, testloader_single
 
 
-    
-
-
 def make_router_and_optimizer(num_classes, load_weights=True):
     model = models.__dict__['preresnet'](
                     num_classes=num_classes,
@@ -268,75 +255,6 @@ def make_router_and_optimizer(num_classes, load_weights=True):
     optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9,
                       weight_decay=5e-4)
     return model, optimizer
-
-
-def return_topk_args_from_heatmap(matrix, n, topk):
-    
-    visited = np.zeros((n,n))
-    tuple_list = []
-    max_so_far = 0
-    s = d = 0
-    for top in range(topk):
-        max_so_far = 0
-        for i in range(10):
-            for j in range(10):
-                if (matrix[i][j] > max_so_far and visited[i][j] != 1):
-                    max_so_far = matrix[i][j]
-                    s = i
-                    d = j
-                    visited[i][j] = 1
-                    visited[j][i] = 1
-        tuple_list.append([s, d])
-    
-    return tuple_list
-                
-                
-                
-            
- 
-def heatmap(data, row_labels, col_labels, ax=None,
-            cbar_kw={}, cbarlabel="", **kwargs):
-   
-
-    if not ax:
-        ax = plt.gca()
-
-    # Plot the heatmap
-    im = ax.imshow(data, **kwargs)
-
-    # Create colorbar
-    cbar = ax.figure.colorbar(im, ax=ax, **cbar_kw)
-    cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
-
-    # We want to show all ticks...
-    ax.set_xticks(np.arange(data.shape[1]))
-    ax.set_yticks(np.arange(data.shape[0]))
-    # ... and label them with the respective list entries.
-    ax.set_xticklabels(col_labels)
-    ax.set_yticklabels(row_labels)
-
-    # Let the horizontal axes labeling appear on top.
-    ax.tick_params(top=True, bottom=False,
-                   labeltop=True, labelbottom=False)
-
-    # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), rotation=-30, ha="right",
-             rotation_mode="anchor")
-
-    # Turn spines off and create white grid.
-    for edge, spine in ax.spines.items():
-        spine.set_visible(False)
-
-    ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
-    ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
-    ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
-    ax.tick_params(which="minor", bottom=False, left=False) 
-    plt.show()
-    if not os.path.exists('checkpoint/figures/'):
-        os.makedirs('checkpoint/figures/')
-    figure_name = 'checkpoint/figures/heatmap_%s.png'%str(args.depth)
-    plt.savefig(figure_name)
-    return im, cbar
 
 
 def prepeare_dataset_for_experts(matrix):
@@ -406,27 +324,10 @@ def load_expert_networks_and_optimizers(model, lois):
         else:
             eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.001, momentum=0.9,
                       weight_decay=5e-4)
-#        optimizer = torch.optim.SGD([
-#            {'params': model.conv1.parameters()},
-#            {'params': model.bn1.parameters()},
-#            {'params': model.relu.parameters()},
-#            {'params': model.maxpool.parameters()},
-#            {'params': model.layer1.parameters()},
-#            {'params': model.layer2.parameters()},
-#            {'params': model.layer3.parameters()},
-#            {'params': model.layer4.parameters()},
-#            {'params': model.avgpool.parameters()},
-#            {'params': model.fc.parameters(), 'lr': opt.lr}
-#        ], lr=opt.lr*0.1, momentum=0.9)
-    # if fine-tune few layers only them we need to create another optimnizers
-    # for now lets stick to simple approaches
         
     return experts, eoptimizers
 
 
-
-#def train_experts():
-    
 
 def adjust_learning_rate(optimizer, epoch):
     global state
@@ -434,7 +335,6 @@ def adjust_learning_rate(optimizer, epoch):
         state['lr'] *= args.gamma
         for param_group in optimizer.param_groups:
             param_group['lr'] = state['lr']
-
 
 
 
@@ -454,11 +354,11 @@ def main():
         test(router, test_loader_router, roptimizer, "router")
         return 
     
-#    if (args.train_end_to_end):
-#        best_so_far = 0.0
-#        for epoch in range(1, args.router_epochs + 1):
-#            router, roptimizer = train(epoch, router, train_loader_router, roptimizer)
-#            best_so_far = test(router, test_loader_router, best_so_far)
+    if (args.train_end_to_end):
+        best_so_far = 0.0
+        for epoch in range(1, args.router_epochs + 1):
+            router, roptimizer = train(epoch, router, train_loader_router, roptimizer)
+            best_so_far = test(router, test_loader_router, best_so_far)
     
     matrix = np.array(calculate_matrix(router, test_loader_single, num_classes), dtype=int)
     print ("Calculating the heatmap for confusing class .....\n")
@@ -501,19 +401,10 @@ def main():
         temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
         print ("Performance on classes {} --> {}".format(loi,  temp ))
 
-    
-#    
-#        
-#        
-#        
+        
 #    model_size = sum( p.numel() for p in router.parameters() if p.requires_grad)
 #    print("The size of the Teacher Model: {}".format(model_size))
-#    
-
-
-
-
-
+   
 if __name__ == '__main__':
     main()
     
