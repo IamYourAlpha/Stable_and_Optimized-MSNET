@@ -1,0 +1,7 @@
+#data
+/checkpoint/
+/ck_backup/
+/data/
+/utils/__pycache__/
+/utils/images/
+*.pyc
