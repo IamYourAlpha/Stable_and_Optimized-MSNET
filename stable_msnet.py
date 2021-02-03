@@ -31,8 +31,8 @@ from torch.optim.lr_scheduler import StepLR
 # models
 import models.cifar as models
 
-from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint
-
+from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, calculate_matrix
+#from ms_net_utils import *
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
 # Hyper-parameters
@@ -45,9 +45,9 @@ parser.add_argument('--train_end_to_end', action='store_true',
                     help='train from router to experts')
 parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--router_epochs', type=int, default=50, metavar='N',
+parser.add_argument('--router_epochs', type=int, default=1, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--expert_epochs', type=int, default=40, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=10, metavar='N',
                     help='number of epochs to train experts')
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.01)')
@@ -68,7 +68,7 @@ parser.add_argument('--evaluate_only_router', action='store_true',
 parser.add_argument('--finetune_experts', action='store_true',
                     help='perform fine-tuning of layer few layers of experts')
 
-parser.add_argument('--topk', type=int, default=5, metavar='N',
+parser.add_argument('--topk', type=int, default=2, metavar='N',
                     help='how many experts you want?')
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
@@ -93,6 +93,7 @@ model_weights = {}
 
 
 use_cuda = torch.cuda.is_available()
+
 if (use_cuda):
     args.cuda = True
 # Random seed
@@ -139,13 +140,9 @@ def train(epoch, model, train_loader, optimizer):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
                  100. * batch_idx / len(train_loader), loss.item()))
-    
-    
     return model, optimizer
 
 
-
-        
 def test(model, test_loader, best_so_far, name, save_wts=False):
     model.eval()
     test_loss = 0
@@ -159,53 +156,35 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         output = F.softmax(output)
         test_loss += F.cross_entropy(output, target).item() # sum up batch loss
         pred = torch.argsort(output, dim=1, descending=True)[0:, 0]
- 
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-
     test_loss /= len(test_loader.dataset)
+    
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
          100. * correct.double() / len(test_loader.dataset) ))
     
     if (not save_wts):
         return 100. * correct.double() / len(test_loader.dataset)
+    
     now_correct = correct.double()/len(test_loader)
+    
     if best_so_far < now_correct:
         print ("best correct: ", best_so_far)
         print ("now correct: ", now_correct)
         found_best = True
         wts = copy.deepcopy(model.state_dict())
-        name = name + ".pth.tar"
+        
+#        if (name == 'router'):
+#            full_path_to_router = './checkpoint/'+'%s'%name
+#            if not os.path.exists(full_path_to_router):
+#                os.makedirs(full_path_to_router)
+        
+        name += ".pth.tar"
         save_checkpoint(wts, found_best, name)
         best_so_far = now_correct
+        
     return best_so_far
     
-
-def calculate_matrix(model, test_loader_single, num_classes):
-    model.eval()
-    stop_at = 50
-    tot = 0
-    freqMat = np.zeros((num_classes, num_classes))
-    for dta, target in test_loader_single:
-        if args.cuda:
-            dta, target = dta.cuda(), target.cuda()
-        dta, target = Variable(dta, volatile=True), Variable(target)
-        output = model(dta)
-        output = F.softmax(output)
-        pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
-        pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
-        if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
-            s = pred2.cpu().numpy()[0]
-            d = pred1.cpu().numpy()[0]
-            freqMat[s][d] += 1
-            freqMat[d][s] += 1
-            tot = tot + 1
-        if (tot == stop_at):
-            break
-     
-    return freqMat
-
-
 def prepare_dataset_for_router():
     
     print('==> Preparing dataset %s' % args.dataset)
@@ -241,7 +220,7 @@ def prepare_dataset_for_router():
     return trainloader, testloader, num_classes, testloader_single
 
 
-def make_router_and_optimizer(num_classes, load_weights=True):
+def make_router_and_optimizer(num_classes, load_weights=False):
     model = models.__dict__['preresnet'](
                     num_classes=num_classes,
                     depth=args.depth,
@@ -318,9 +297,10 @@ def load_expert_networks_and_optimizers(model, lois):
         # for now
         args.finetune_experts = True
         if (args.finetune_experts):
-            eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer3.parameters()},
+            eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer2.parameters()},
+                                         {'params': experts[loi].layer3.parameters()},
                                          {'params': experts[loi].fc.parameters()}],
-                                         lr=0.0001, momentum=0.9, weight_decay=5e-4)
+                                         lr=0.001, momentum=0.9, weight_decay=5e-4)
         else:
             eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.001, momentum=0.9,
                       weight_decay=5e-4)
@@ -335,18 +315,55 @@ def adjust_learning_rate(optimizer, epoch):
         state['lr'] *= args.gamma
         for param_group in optimizer.param_groups:
             param_group['lr'] = state['lr']
+            
+            
+def inference_with_experts_and_routers(test_loader, experts, router, topk):
+    
+    router.eval()
+    experts_on_stack = []
+    for k, v in experts.items():
+        experts[k].eval()
+        experts_on_stack.append(k)
+    
+    correct = 0
+    for dta, target in test_loader:
+       
+        if args.cuda:
+            dta, target = dta.cuda(), target.cuda()
+        dta, target = Variable(dta, volatile=True), Variable(target)
+        output = router(dta)
+        output = F.softmax(output)
+        
+        preds = []
+        for k in range(0, topk):
+            ref = torch.argsort(output, dim=1, descending=True)[0:, k]
+            preds.append(ref.cpu().numpy()[0])
+            
+        
+        cuda0 = torch.device('cuda:0')
+        experts_output = torch.zeros([1, 10], dtype=torch.float32, device=cuda0)
+       
+        if (str(preds[0]) not in experts_on_stack):
+            if (preds[0] == target.cpu().numpy()[0]):
+                correct += 1
+        else:
+            for exp in experts_on_stack:
+                if (str(preds[0]) in exp):
+                    experts_output += experts[exp](dta)
+            experts_output += output
+            experts_output_sm = F.softmax(experts_output)
+            pred = torch.argsort(experts_output_sm, dim=1, descending=True)[0:, 0]
+            if (pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
+                correct += 1
 
-
+    return correct
 
 def main():
+    
     global best_acc
     if not os.path.isdir(args.checkpoint):
         os.makedirs(args.checkpoint)
-
-    # Data
     train_loader_router, test_loader_router, num_classes, test_loader_single = prepare_dataset_for_router()
-    
-    # Model
     print("==> creating model")
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
@@ -360,48 +377,46 @@ def main():
             router, roptimizer = train(epoch, router, train_loader_router, roptimizer)
             best_so_far = test(router, test_loader_router, best_so_far)
     
-    matrix = np.array(calculate_matrix(router, test_loader_single, num_classes), dtype=int)
+    matrix = np.array(calculate_matrix(router, test_loader_single, num_classes, args.cuda), dtype=int)
     print ("Calculating the heatmap for confusing class .....\n")
-    
+        
     ls = np.arange(num_classes)
     heatmap(matrix, ls, ls) # show heatmap
     matrix_args = return_topk_args_from_heatmap(matrix, num_classes, args.topk)
     for mat in matrix_args:
-        print (mat)
-        
-    return    
+        print (mat) 
         
     expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(matrix_args)
-    
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois)
     
-     #training of the expert networks begin
+    #training of the expert networks begin
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     save_wts = True
     for loi in lois:
         best_so_far = 0.0
         for epoch in range(1, args.expert_epochs + 1):
-           # print (experts[loi], eoptmizers[loi], expert_train_dataloaders[loi])
+#            if (args.codistillation):
+#                
             experts[loi], eoptmizers[loi] = train(epoch, experts[loi], expert_train_dataloaders[loi], eoptmizers[loi])
             best_so_far = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
     
-    save_wts = False
-
-    print("Performance of Router:\n")
-    for loi in lois:
-        temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts)
-        print ("{} is {}".format(loi, temp))
     
-    print (20 * "*")
-    wts = torch.load('checkpoint/model_best.pth.tar')
+    save_wts = False
+#    wts_router = torch.load('checkpoint/model_best.pth.tar')
+#    router.load_state_dict(wts_router)
     for loi in lois:
-        path =  'checkpoint/' + '%s'%loi + '.pth.tar'
-        wts = torch.load(path)
+        #temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts)
+        #print ("Performance of ROUTER in classes {} : {}".format(loi, temp))
+        wts = torch.load('checkpoint/' + '%s'%loi + '.pth.tar')
         experts[loi].load_state_dict(wts)
-        temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
-        print ("Performance on classes {} --> {}".format(loi,  temp ))
-
-        
+        #temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
+        #print ("Performance of EXPERTS in classes {} : {}".format(loi,  temp ))
+    
+    print ("Setting up to performance inference with experts and routers .... \n")
+    topk = 2
+    accuracy_exp = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
+    accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts)
+    print ("Performance ---> Router ACC: {} \n .... Experts: {}".format(accuracy_router, accuracy_exp))
 #    model_size = sum( p.numel() for p in router.parameters() if p.requires_grad)
 #    print("The size of the Teacher Model: {}".format(model_size))
    

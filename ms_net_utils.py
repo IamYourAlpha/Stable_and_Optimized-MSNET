@@ -9,8 +9,10 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from torch.autograd import Variable
+import torch.nn.functional as F
 
-__all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint']
+__all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix']
 
 def return_topk_args_from_heatmap(matrix, n, topk):
     
@@ -74,10 +76,35 @@ def heatmap(data, row_labels, col_labels, ax=None,
     plt.show()
     if not os.path.exists('checkpoint/figures/'):
         os.makedirs('checkpoint/figures/')
-    figure_name = 'checkpoint/figures/heatmap_%s.png'%str(args.depth)
-    plt.savefig(figure_name)
+    #figure_name = 'checkpoint/figures/heatmap_%s.png'%str(depth)
+    #plt.savefig(figure_name)
     return im, cbar
 
+
+
+
+def calculate_matrix(model, test_loader_single, num_classes, cuda):
+    model.eval()
+    stop_at = 50
+    tot = 0
+    freqMat = np.zeros((num_classes, num_classes))
+    for dta, target in test_loader_single:
+        if cuda:
+            dta, target = dta.cuda(), target.cuda()
+        dta, target = Variable(dta, volatile=True), Variable(target)
+        output = model(dta)
+        output = F.softmax(output)
+        pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
+        pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
+        if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
+            s = pred2.cpu().numpy()[0]
+            d = pred1.cpu().numpy()[0]
+            freqMat[s][d] += 1
+            freqMat[d][s] += 1
+            tot = tot + 1
+#        if (tot == stop_at):
+#            break
+    return freqMat
 
 
 
