@@ -10,10 +10,10 @@ from __future__ import print_function
 import argparse
 
 # torch
+import csv
 import torch
-import torchvision
-import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.autograd import Variable
@@ -21,6 +21,7 @@ from torch.utils.data import  SubsetRandomSampler, WeightedRandomSampler
 import os
 import random
 import time
+import json
 import copy
 import numpy as np
 import torch.utils.data as data
@@ -36,9 +37,9 @@ from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
 # Hyper-parameters
-parser.add_argument('--train-batch', default=128, type=int, metavar='N',
+parser.add_argument('--train-batch', default=32, type=int, metavar='N',
                     help='train batchsize')
-parser.add_argument('--test-batch', default=100, type=int, metavar='N',
+parser.add_argument('--test-batch', default=4, type=int, metavar='N',
                     help='test batchsize')
 
 parser.add_argument('--train_end_to_end', action='store_true',
@@ -47,7 +48,7 @@ parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--router_epochs', type=int, default=1, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--expert_epochs', type=int, default=10, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=5, metavar='N',
                     help='number of epochs to train experts')
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.01)')
@@ -57,7 +58,7 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--cuda', action='store_true', default=True,
                     help='enable CUDA training')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
+parser.add_argument('--seed', type=int, default=10, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                     help='how many batches to wait before logging training status')
@@ -65,10 +66,13 @@ parser.add_argument('-d', '--dataset', default='cifar10', type=str)
 parser.add_argument('--evaluate_only_router', action='store_true',
                     help='evaluate router on testing set')
 
+parser.add_argument('--weighted_sampler', action='store_true',
+                    help='what sampler you want?, subsetsampler or weighted')
+
 parser.add_argument('--finetune_experts', action='store_true',
                     help='perform fine-tuning of layer few layers of experts')
 
-parser.add_argument('--topk', type=int, default=2, metavar='N',
+parser.add_argument('--topk', type=int, default=5, metavar='N',
                     help='how many experts you want?')
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
@@ -93,6 +97,12 @@ model_weights = {}
 
 
 use_cuda = torch.cuda.is_available()
+
+
+classes = {'airplane': 0, 'automobile': 1, 'bird': 2, 'cat': 3,
+           'deer': 4, 'dog': 5, 'frog': 6, 'horse': 7, 'ship': 8, 'truck': 9}
+    
+
 
 if (use_cuda):
     args.cuda = True
@@ -122,20 +132,30 @@ def doPlot(val_scores):
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
 
+def distillation(y, labels, teacher_scores, T, alpha):
+    return nn.KLDivLoss()(F.log_softmax(y/T, dim=1), 
+                        F.softmax(teacher_scores/T, dim=1)) \
+                        * (T*T * 2.0 * alpha) + F.cross_entropy(y, labels) * (1. - alpha)
 
 
-def train(epoch, model, train_loader, optimizer): 
+
+def train(epoch, model, teacher, train_loader, optimizer): 
     model.train()
-
+    #loss_fn = distillation
+    correct = 0
     for batch_idx, (dta, target) in enumerate(train_loader):
         if args.cuda:
             dta, target = dta.cuda(), target.cuda()
         dta, target = Variable(dta), Variable(target)
         optimizer.zero_grad()
         output = model(dta)
+        #output_teacher = teacher(dta)
+        #output_teacher = output_teacher.detach()
+        #loss = loss_fn(output, target, output_teacher, T=3, alpha=0.3)
         loss = F.cross_entropy(output, target)
         loss.backward()
         optimizer.step()
+        
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
@@ -164,9 +184,10 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
          100. * correct.double() / len(test_loader.dataset) ))
     
     if (not save_wts):
-        return 100. * correct.double() / len(test_loader.dataset)
+        correct = correct.double()
+        return None, correct
     
-    now_correct = correct.double()/len(test_loader)
+    now_correct = correct.double()
     
     if best_so_far < now_correct:
         print ("best correct: ", best_so_far)
@@ -183,7 +204,7 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         save_checkpoint(wts, found_best, name)
         best_so_far = now_correct
         
-    return best_so_far
+    return best_so_far, now_correct 
     
 def prepare_dataset_for_router():
     
@@ -199,6 +220,7 @@ def prepare_dataset_for_router():
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
+    
     if args.dataset == 'cifar10':
         dataloader = datasets.CIFAR10
         num_classes = 10
@@ -236,7 +258,7 @@ def make_router_and_optimizer(num_classes, load_weights=False):
     return model, optimizer
 
 
-def prepeare_dataset_for_experts(matrix):
+def prepeare_dataset_for_experts(matrix, values):
     
     ''' there are two options , either use fixed sampler or 
     use weighted sampler. The purpose of fixed sampler is just
@@ -267,26 +289,68 @@ def prepeare_dataset_for_experts(matrix):
     
     train_set = dataloader(root='./data', train=True, download=True, transform=transform_train)
     test_set = dataloader(root='./data', train=False, download=False, transform=transform_test)
+    
+    class_sample_count = np.array([len(np.where(train_set.targets == t)[0]) \
+                                       for t in np.unique(train_set.targets)])
+    
     train_loader_expert = {}
     test_loader_expert = {}
     list_of_index = []
-    print (matrix)
-    for sub in matrix: 
-        indices_train = [i for i,e in enumerate(train_set.targets) if e in sub] 
-        indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
-        index = str(sub[0]) + "_" + str(sub[1])
-        print ("The subs are {} and {}:".format(sub[0], sub[1]))
-        train_loader_expert[index] = torch.utils.data.DataLoader(
-                                 train_set,
-                                 batch_size=args.train_batch,
-                                 sampler = SubsetRandomSampler(indices_train))
-        test_loader_expert[index] = torch.utils.data.DataLoader(
-                                 test_set,
-                                 batch_size=args.test_batch,
-                                 sampler = SubsetRandomSampler(indices_test))
-        list_of_index.append(index)
-
-    return train_loader_expert, test_loader_expert, list_of_index
+    args.weighted_sampler = False
+    if (args.weighted_sampler):
+        print ("***************Preparing weighted sampler ********************************")
+        for sub in matrix:
+            
+            weight = class_sample_count / class_sample_count
+            weight[sub[0]] *= 5#alpha can be the function of counts
+            weight[sub[1]] *= 5#alpha
+            
+            samples_weight = np.array([weight[t] for t in train_set.targets])
+            samples_weight = torch.from_numpy(samples_weight)
+            print ("Samples weight: {} and \n shape: {}".format(samples_weight, len(samples_weight)))
+              
+            
+            sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+            
+            
+            index = str(sub[0]) + "_" + str(sub[1])
+            print ("The subs are {} and {}:".format(sub[0], sub[1]))
+            
+            
+            train_loader_expert[index] = torch.utils.data.DataLoader(
+                                     train_set,
+                                     batch_size=args.train_batch,
+                                     sampler = sampler)
+            
+            indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
+            
+            test_loader_expert[index] = torch.utils.data.DataLoader(
+                                     test_set,
+                                     batch_size=args.test_batch,
+                                     sampler = SubsetRandomSampler(indices_test))
+            list_of_index.append(index)
+        
+        
+        return train_loader_expert, test_loader_expert, list_of_index
+ 
+    # if subsetRandomSampler
+    else:
+        for sub in matrix: 
+            indices_train = [i for i,e in enumerate(train_set.targets) if e in sub] 
+            indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
+            index = str(sub[0]) + "_" + str(sub[1])
+            print ("The subs are {} and {}:".format(sub[0], sub[1]))
+            train_loader_expert[index] = torch.utils.data.DataLoader(
+                                     train_set,
+                                     batch_size=args.train_batch,
+                                     sampler = SubsetRandomSampler(indices_train))
+            test_loader_expert[index] = torch.utils.data.DataLoader(
+                                     test_set,
+                                     batch_size=args.test_batch,
+                                     sampler = SubsetRandomSampler(indices_test))
+            list_of_index.append(index)
+    
+        return train_loader_expert, test_loader_expert, list_of_index
 
 
 def load_expert_networks_and_optimizers(model, lois):
@@ -300,12 +364,27 @@ def load_expert_networks_and_optimizers(model, lois):
             eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer2.parameters()},
                                          {'params': experts[loi].layer3.parameters()},
                                          {'params': experts[loi].fc.parameters()}],
-                                         lr=0.001, momentum=0.9, weight_decay=5e-4)
+                                         lr=0.00001, momentum=0.9, weight_decay=5e-4)
+            # usually lets learning rateto 0.001 for finetuning with subset sampler
+            # set it to very lowe value, say 0.00001
         else:
             eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.001, momentum=0.9,
                       weight_decay=5e-4)
         
     return experts, eoptimizers
+
+def load_teacher_network():
+    teacher = models.__dict__['resnext'](
+                    cardinality=8,
+                    num_classes=10,
+                    depth=29,
+                    widen_factor=4,
+                    dropRate=0,
+                )
+    teacher = torch.nn.DataParallel(teacher).cuda()
+    checkpoint = torch.load("./ck_backup/teachers/resnext_best.pth.tar")
+    teacher.load_state_dict(checkpoint['state_dict'])
+    return teacher
 
 
 
@@ -316,23 +395,32 @@ def adjust_learning_rate(optimizer, epoch):
         for param_group in optimizer.param_groups:
             param_group['lr'] = state['lr']
             
-            
-def inference_with_experts_and_routers(test_loader, experts, router, topk):
+     
+        
+def average(outputs):
+    """Compute the average over a list of tensors with the same size."""
+    return sum(outputs) / len(outputs)
     
+
+def inference_with_experts_and_routers(test_loader, experts, router, topk):
+
     router.eval()
     experts_on_stack = []
     for k, v in experts.items():
         experts[k].eval()
         experts_on_stack.append(k)
-    
+    count = 0
     correct = 0
+    count_of_experts = 0
+    by_experts, by_router = 0, 0
+    mistake_by_experts, mistake_by_router = 0, 0
     for dta, target in test_loader:
-       
+        count += 1
         if args.cuda:
             dta, target = dta.cuda(), target.cuda()
         dta, target = Variable(dta, volatile=True), Variable(target)
-        output = router(dta)
-        output = F.softmax(output)
+        output_raw = router(dta)
+        output = F.softmax(output_raw)
         
         preds = []
         for k in range(0, topk):
@@ -342,35 +430,110 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk):
         
         cuda0 = torch.device('cuda:0')
         experts_output = torch.zeros([1, 10], dtype=torch.float32, device=cuda0)
-       
-        if (str(preds[0]) not in experts_on_stack):
+        
+        router_confident = True
+        for exp_ in experts_on_stack:
+            if (str(preds[0]) in exp_):
+                router_confident = False
+                break
+        
+        if (router_confident):
             if (preds[0] == target.cpu().numpy()[0]):
                 correct += 1
+                by_router += 1
+            else:
+                mistake_by_router += 1
+                    
         else:
+            list_of_experts = []
             for exp in experts_on_stack:
                 if (str(preds[0]) in exp):
-                    experts_output += experts[exp](dta)
-            experts_output += output
-            experts_output_sm = F.softmax(experts_output)
-            pred = torch.argsort(experts_output_sm, dim=1, descending=True)[0:, 0]
+                    list_of_experts.append(experts[exp])
+                    count_of_experts += 1
+                    
+            experts_output = [exp_(dta) for exp_ in list_of_experts]
+            experts_output.append(output_raw*10)
+            experts_output_avg = average(experts_output)
+            experts_output_prob = F.softmax(experts_output_avg, dim=1)
+            
+            pred = torch.argsort(experts_output_prob, dim=1, descending=True)[0:, 0]
             if (pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
                 correct += 1
-
+                by_experts += 1
+            else:
+                mistake_by_experts += 1
+     
+#        if (count == 500):
+#            break
+            
+    print ("Routers: {} \n Experts: {}".format(by_router, by_experts))
+    print ("Mistakes by Routers: {} \n Mistakes by Experts: {}".format(mistake_by_router, mistake_by_experts))
+    
     return correct
 
-def main():
+def ensemble_inference(test_loader, experts, router):
+    router.eval()
+   
+    experts_on_stack = []
+    for k, v in experts.items():
+        experts[k].eval()
+        experts_on_stack.append(k)
     
+    correct = 0
+    test_loss = 0
+    list_of_experts = []
+    for dta, target in test_loader:
+        if args.cuda:
+            dta, target = dta.cuda(), target.cuda()
+        dta, target = Variable(dta, volatile=True), Variable(target)
+        
+        output = router(dta)
+        for exp in experts_on_stack:
+            list_of_experts.append(experts[exp])
+        all_outputs = [exp_(dta) for exp_ in list_of_experts]
+        all_outputs.append(output)
+        all_outputs_avg = average(all_outputs)
+        all_output_prob = F.softmax(all_outputs_avg)
+        output = F.softmax(output)
+        test_loss += F.cross_entropy(all_output_prob, target).item() # sum up batch loss
+        pred = torch.argsort(output, dim=1, descending=True)[0:, 0]
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+    test_loss /= len(test_loader.dataset)
+    
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset),
+         100. * correct.double() / len(test_loader.dataset) ))
+
+
+def make_list_for_plots(lois, plot, indexes):
+    lst = []
+    for loi in lois:
+        for index in indexes:
+            ind = loi + index
+            lst.append(ind)
+            plot[ind] = []
+    
+    return plot, lst
+
+
+def save_csv(plots, lst):
+    
+    with open('exp_subset_sampler.json', 'w') as fp:
+        json.dump(plots, fp)
+
+
+
+def main():
+ 
     global best_acc
     if not os.path.isdir(args.checkpoint):
         os.makedirs(args.checkpoint)
     train_loader_router, test_loader_router, num_classes, test_loader_single = prepare_dataset_for_router()
     print("==> creating model")
+    
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
-    if (args.evaluate_only_router):
-        test(router, test_loader_router, roptimizer, "router")
-        return 
-    
+
     if (args.train_end_to_end):
         best_so_far = 0.0
         for epoch in range(1, args.router_epochs + 1):
@@ -379,47 +542,73 @@ def main():
     
     matrix = np.array(calculate_matrix(router, test_loader_single, num_classes, args.cuda), dtype=int)
     print ("Calculating the heatmap for confusing class .....\n")
-        
+
     ls = np.arange(num_classes)
     heatmap(matrix, ls, ls) # show heatmap
-    matrix_args = return_topk_args_from_heatmap(matrix, num_classes, args.topk)
+    matrix_args, values = return_topk_args_from_heatmap(matrix, num_classes, args.topk)
     for mat in matrix_args:
         print (mat) 
         
-    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(matrix_args)
+    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(matrix_args, values)
+    print(expert_train_dataloaders)
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois)
     
-    #training of the expert networks begin
+    
+    teacher = load_teacher_network()
+    if (args.evaluate_only_router):
+        test(teacher, expert_test_dataloaders[lois], roptimizer, "router")
+        return 
+    
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
-    save_wts = True
-    for loi in lois:
-        best_so_far = 0.0
-        for epoch in range(1, args.expert_epochs + 1):
-#            if (args.codistillation):
-#                
-            experts[loi], eoptmizers[loi] = train(epoch, experts[loi], expert_train_dataloaders[loi], eoptmizers[loi])
-            best_so_far = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
     
     
-    save_wts = False
-#    wts_router = torch.load('checkpoint/model_best.pth.tar')
-#    router.load_state_dict(wts_router)
-    for loi in lois:
-        #temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts)
-        #print ("Performance of ROUTER in classes {} : {}".format(loi, temp))
-        wts = torch.load('checkpoint/' + '%s'%loi + '.pth.tar')
-        experts[loi].load_state_dict(wts)
-        #temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts)
-        #print ("Performance of EXPERTS in classes {} : {}".format(loi,  temp ))
+    indexes=['_test_experts', '_test_all']
+    plot = {}
+    plots, lst = make_list_for_plots(lois, plot, indexes)       
+#    for loi in lois:
+#        best_so_far = 0.0
+#        garbage = 99999999
+#        for epoch in range(1, args.expert_epochs + 1):
+#            experts[loi], eoptmizers[loi] = train(epoch, \
+#                   experts[loi], router, expert_train_dataloaders[loi], eoptmizers[loi])
+#            
+#            
+#            best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
+#                               best_so_far, loi, save_wts=True)
+#            
+#            index = loi + '_test_experts'
+#            test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
+#            plots[index].append(test_acc_on_expert_data_)
+#            
+#            _, c = test(experts[loi], test_loader_router, \
+#                               garbage, loi, save_wts=False)
+#            c_ = int(c.cpu().numpy())
+#            index = loi + '_test_all'
+#            plots[index].append(c_)
+#        
+#    save_csv(plots, lst)
+#    
     
+    router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
+    print ("*" * 50)
+    best_so_far = 0
+#    for loi in lois:
+#        _, temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts=False)
+#        print ("Performance of ROUTER in classes {} : {}".format(loi, temp))
+#        wts = torch.load('checkpoint/' + '%s'%loi + '.pth.tar')
+#        experts[loi].load_state_dict(wts)
+#        _, temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts=False)
+#        print ("Performance of EXPERTS in classes {} : {}".format(loi,  temp ))
+#    
+    ensemble_inference(test_loader_router, experts, router)
     print ("Setting up to performance inference with experts and routers .... \n")
-    topk = 2
-    accuracy_exp = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
-    accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts)
-    print ("Performance ---> Router ACC: {} \n .... Experts: {}".format(accuracy_router, accuracy_exp))
-#    model_size = sum( p.numel() for p in router.parameters() if p.requires_grad)
-#    print("The size of the Teacher Model: {}".format(model_size))
-   
+    topk = 1
+    #accuracy_exp = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
+    _, accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts=False)
+    print ("Performance ---> Router ACC: {} \n ....         Experts: {}".format(accuracy_router, accuracy_exp))
+
+
+
 if __name__ == '__main__':
     main()
     

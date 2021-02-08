@@ -18,21 +18,39 @@ def return_topk_args_from_heatmap(matrix, n, topk):
     
     visited = np.zeros((n,n))
     tuple_list = []
-    max_so_far = 0
-    s = d = 0
-    for top in range(topk):
-        max_so_far = 0
-        for i in range(10):
-            for j in range(10):
-                if (matrix[i][j] > max_so_far and visited[i][j] != 1):
-                    max_so_far = matrix[i][j]
-                    s = i
-                    d = j
+    value_of_tuple = []
+   #max_so_far = 0
+   #s = d = 0
+    
+    for i in range(0, 10):
+        for j in range(0, 10):
+            if ( not visited[i][j] and not visited[j][i] \
+                and matrix[i][j]>0):
+                    tuple_list.append([i,j])
+                    value_of_tuple.append(matrix[i][j])
                     visited[i][j] = 1
                     visited[j][i] = 1
-        tuple_list.append([s, d])
+                    
+                    
     
-    return tuple_list
+    
+#    for top in range(topk):
+#        max_so_far = 0
+#        for i in range(10):
+#            for j in range(10):
+#                if (matrix[i][j] > max_so_far and \
+#                    visited[i][j] != 1 and visited[j][i] != 1):
+#                    max_so_far = matrix[i][j]
+#                    s = i
+#                    d = j
+#                    visited[i][j] = 1
+#                    visited[j][i] = 1
+    
+#        tuple_list.append([s, d])
+#        value_of_tuple.append(max_so_far)
+    
+    
+    return tuple_list, value_of_tuple
 
 
 
@@ -102,8 +120,8 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
             freqMat[s][d] += 1
             freqMat[d][s] += 1
             tot = tot + 1
-#        if (tot == stop_at):
-#            break
+        if (tot == stop_at):
+            break
     return freqMat
 
 
