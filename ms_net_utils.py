@@ -14,43 +14,56 @@ import torch.nn.functional as F
 
 __all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix']
 
+
+
+def sort_by_value(dict_, reverse=False):
+    
+    dict_tuple_sorted = {k: v for k, v in \
+                         sorted(dict_.items(),\
+                                reverse=True, key=lambda item: item[1])}
+    return dict_tuple_sorted
+
+
 def return_topk_args_from_heatmap(matrix, n, topk):
     
     visited = np.zeros((n,n))
     tuple_list = []
     value_of_tuple = []
-   #max_so_far = 0
-   #s = d = 0
-    
-    for i in range(0, 10):
-        for j in range(0, 10):
+    dict_tuple = {}
+
+    for i in range(0, n):
+        for j in range(0, n):
             if ( not visited[i][j] and not visited[j][i] \
                 and matrix[i][j]>0):
-                    tuple_list.append([i,j])
-                    value_of_tuple.append(matrix[i][j])
+                    dict_tuple[str(i) + '_' + str(j)] =  matrix[i][j]
                     visited[i][j] = 1
                     visited[j][i] = 1
                     
-                    
+    dict_sorted = sort_by_value(dict_tuple, reverse=True)    
     
     
-#    for top in range(topk):
-#        max_so_far = 0
-#        for i in range(10):
-#            for j in range(10):
-#                if (matrix[i][j] > max_so_far and \
-#                    visited[i][j] != 1 and visited[j][i] != 1):
-#                    max_so_far = matrix[i][j]
-#                    s = i
-#                    d = j
-#                    visited[i][j] = 1
-#                    visited[j][i] = 1
+    for k, v in dict_sorted.items():
+        sub_1, sub_2 = int(k[0]), int(k[2])
+        tuple_list.append([sub_1, sub_2])
+        value_of_tuple.append(v)
+        if (len(tuple_list) == topk):
+            return tuple_list, value_of_tuple
+##    
+#    new_tuple = []
+#    
+#    for keys in tuple_list:
+#        key1, key2 =  keys
+#        for i in range(0, n):
+#            if (matrix[key1][i] > 0 or matrix[i][key1]>0):
+#                new_tuple.append([key1, i])
+#
+#            if (matrix[key2][i] > 0 or matrix[i][key2]>0):
+#                new_tuple.append([key2, i])
+#        break
+        
     
-#        tuple_list.append([s, d])
-#        value_of_tuple.append(max_so_far)
-    
-    
-    return tuple_list, value_of_tuple
+   # return new_tuple, value_of_tuple
+    #return tuple_list, value_of_tuple
 
 
 
@@ -103,7 +116,7 @@ def heatmap(data, row_labels, col_labels, ax=None,
 
 def calculate_matrix(model, test_loader_single, num_classes, cuda):
     model.eval()
-    stop_at = 50
+    stop_at = 100
     tot = 0
     freqMat = np.zeros((num_classes, num_classes))
     for dta, target in test_loader_single:
@@ -120,8 +133,8 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
             freqMat[s][d] += 1
             freqMat[d][s] += 1
             tot = tot + 1
-        if (tot == stop_at):
-            break
+#        if (tot == stop_at):
+#            break
     return freqMat
 
 

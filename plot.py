@@ -8,25 +8,68 @@ Created on Mon Feb  8 09:26:06 2021
 
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 import json
 import numpy as np
+import pandas as pd
 
-with open('./checkpoint/w_o_d_subset_sampler_5experts/exp_subset_sampler.json', encoding='utf-8') as fl:
-    b = fl.read()
-   # print(b['text'])
-print (b)
 
-a = [1760, 1780, 1784, 1795, 1802, 1790, 1799, 1789, 1784, 1793, 1803, 1794, 1800, 1809, 1808, 1812, \
-1801, 1809, 1803, 1811, 1811, 1810, 1810, 1803, 1802, 1802, 1795, 1803, 1809, 1799]
-c = [8578, 8403, 8358, 8206, 8010, 8128, 8042, 7975, 8063, 7927, 8014, 7759, 7815, 7694, 7670, 7720, 7596, 7598, 7616, 7496, 7479, 7510, 7396, 7438, 7442, 7407, 7341, 7256, 7276, 7206]
-a = [num*100/2000 for num in a] 
-#plt.plot()
-c = [num*100/10000 for num in c] 
+
 b = np.arange(1, 31)  
 
 
+acc = pd.read_csv('./checkpoint/w_o_d_subset_sampler_5experts/exp_subset_sampler.csv')
+acc = pd.read_csv('out_30_finetuned.csv')
+
+#
+#sns.relplot(
+#    data=acc,
+#    x="epochs", y="3_5_test_experts",
+#    kind="line"
+#)
+print (acc.describe())
+a_3_5_test_subset = np.array(acc['3_5_test_experts'])
+a_3_5_test_all = np.array(acc['3_5_test_all'])
 
 fig, ax = plt.subplots()
 
-ax.plot(b,a)
-ax.plot(b,c)
+
+a_3_5_test_subset = np.array(acc['3_5_test_experts'])
+a_3_5_test_subset = [num/2000*100 for num in a_3_5_test_subset]
+
+a_3_5_test_all = np.array(acc['3_5_test_all'])
+a_3_5_test_all = [num/10000*100 for num in a_3_5_test_all]
+
+
+ax.plot(b,a_3_5_test_subset, label='3-5 class accuracy')
+ax.plot(b,a_3_5_test_all, label='all class accuracy')
+legend = ax.legend(loc='upper centre', shadow=False, fontsize='x-large')
+plt.grid(True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a_4_7_test_subset = np.array(acc['2_3_test_experts'])
+a_4_7_test_subset = [num/2000*100 for num in a_4_7_test_subset]
+
+a_4_7_test_all = np.array(acc['2_3_test_all'])
+a_4_7_test_all = [num/10000*100 for num in a_4_7_test_all]
+
+
+fig, ax = plt.subplots()
+ax.plot(b,a_4_7_test_subset, label='2-3 class accuracy')
+ax.plot(b,a_4_7_test_all, label='all class accuracy')
+legend = ax.legend(loc='upper centre', shadow=False, fontsize='x-large')
+##legend.get_frame().set_facecolor('C9')
+plt.grid(True)
+
