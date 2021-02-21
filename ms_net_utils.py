@@ -12,9 +12,8 @@ import matplotlib.pyplot as plt
 from torch.autograd import Variable
 import torch.nn.functional as F
 
-__all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix']
-
-
+__all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix',\
+           'make_list_for_plots']
 
 def sort_by_value(dict_, reverse=False):
     
@@ -22,7 +21,6 @@ def sort_by_value(dict_, reverse=False):
                          sorted(dict_.items(),\
                                 reverse=True, key=lambda item: item[1])}
     return dict_tuple_sorted
-
 
 def return_topk_args_from_heatmap(matrix, n, topk):
     
@@ -40,7 +38,6 @@ def return_topk_args_from_heatmap(matrix, n, topk):
                     visited[j][i] = 1
                     
     dict_sorted = sort_by_value(dict_tuple, reverse=True)    
-    
     
     for k, v in dict_sorted.items():
         sub_1, sub_2 = int(k[0]), int(k[2])
@@ -64,8 +61,6 @@ def return_topk_args_from_heatmap(matrix, n, topk):
     
    # return new_tuple, value_of_tuple
     #return tuple_list, value_of_tuple
-
-
 
 def heatmap(data, row_labels, col_labels, ax=None,
             cbar_kw={}, cbarlabel="", **kwargs):
@@ -111,12 +106,19 @@ def heatmap(data, row_labels, col_labels, ax=None,
     #plt.savefig(figure_name)
     return im, cbar
 
-
-
+def make_list_for_plots(lois, plot, indexes):
+    lst = []
+    for loi in lois:
+        for index in indexes:
+            ind = loi + index
+            lst.append(ind)
+            plot[ind] = []
+    
+    return plot, lst
 
 def calculate_matrix(model, test_loader_single, num_classes, cuda):
     model.eval()
-    stop_at = 100
+    stop_at = 10
     tot = 0
     freqMat = np.zeros((num_classes, num_classes))
     for dta, target in test_loader_single:
@@ -128,16 +130,26 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
         pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
         pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
         if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
+        
+        # if (pred1.cpu().numpy()[0] != target.cpu().numpy()[0]):
+            # s = pred1.cpu().numpy()[0]
+            # d = target.cpu().numpy()[0]
+            
             s = pred2.cpu().numpy()[0]
             d = pred1.cpu().numpy()[0]
             freqMat[s][d] += 1
             freqMat[d][s] += 1
-            tot = tot + 1
-#        if (tot == stop_at):
-#            break
+            tot = tot + 1#    
+#            if (tot == stop_at):
+#                break
+
     return freqMat
 
-
+def imshow(img):
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy() # pytorch tensor is usually (n, C(0), H(1), W(2))
+    plt.imshow(np.transpose(npimg, (1, 2, 0))) # numpy needs (H(1), W(2), C(0))
+    plt.show()
 
 def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
     filepath = os.path.join("checkpoint", filename)
