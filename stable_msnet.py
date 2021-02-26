@@ -11,6 +11,7 @@ import argparse
 
 # torch
 import csv
+from os.path import basename
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -36,7 +37,7 @@ import models.cifar as models
 
 from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, \
 calculate_matrix, make_list_for_plots
-#from ms_net_utils import *
+from ms_net_utils import *
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
 # Hyper-parameters
@@ -46,7 +47,7 @@ parser.add_argument('--test-batch', default=32, type=int, metavar='N',
                     help='test batchsize')
 
 
-parser.add_argument('--schedule', type=int, nargs='+', default=[30, 60, 80],
+parser.add_argument('--schedule', type=int, nargs='+', default=[50, 100, 130],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--train_end_to_end', action='store_true',
                     help='train from router to experts')
@@ -54,8 +55,10 @@ parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--router_epochs', type=int, default=1, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--expert_epochs', type=int, default=100, metavar='N',
+###############################################################################
+parser.add_argument('--expert_epochs', type=int, default=150, metavar='N',
                     help='number of epochs to train experts')
+##########################################################################
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
@@ -75,14 +78,18 @@ parser.add_argument('--evaluate_only_router', action='store_true',
 parser.add_argument('--weighted_sampler', action='store_true',
                     help='what sampler you want?, subsetsampler or weighted')
 
-parser.add_argument('--finetune_experts', action='store_true',
+parser.add_argument('--finetune_experts', action='store_true', default=True,
                     help='perform fine-tuning of layer few layers of experts')
 
-
 ###########################################################################
-parser.add_argument('--topk', type=int, default=1, metavar='N',
+
+parser.add_argument('--alpha_prob', type=int, default=80, help='alpha probability')
+
+parser.add_argument('--topk', type=int, default=3, metavar='N',
                     help='how many experts you want?')
 ###########################################################################
+
+
 
 
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
@@ -158,26 +165,47 @@ def distillation(y, labels, teacher_scores, T, alpha):
                         * (T*T * 2.0 * alpha) + F.cross_entropy(y, labels) * (1. - alpha)
 
 
+def get_bernouli_list(alpha_prob):
+    bernouli = []
+    for i in range(alpha_prob):
+        bernouli.append(1) # Pr(beta) == X.X
+    for i in range(alpha_prob, 100):
+        bernouli.append(0) 
+    return bernouli
 
-def train(epoch, model, teacher, train_loader, optimizer): 
+
+def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer, bernouli, stocastic_loss=False): 
     model.train()
     teacher.eval()
-    ##loss_fn = distillation
+    loss_fn = distillation
     #correct = 0
+    print ("\n \n {} Stocastic Loss is : {} {} \n \n ".format("*"*20, stocastic_loss, "*"*20))
     for batch_idx, (dta, target) in enumerate(train_loader):
+        dta_all, target_all = next(iter(train_loader_all_data))
         if args.cuda:
             dta, target = dta.cuda(), target.cuda()
+            dta_all, target_all = dta_all.cuda(), target_all.cuda()
+            
         dta, target = Variable(dta), Variable(target)
+        dta_all, target_all = Variable(dta_all), Variable(target_all)
         optimizer.zero_grad()
         output = model(dta)
-        #output_teacher = teacher(dta)
-        #output_teacher = output_teacher.detach()
-        ##loss = loss_fn(output, target, output_teacher, T=3, alpha=1.0)
-        loss = F.cross_entropy(output, target)
+        output_all = model(dta_all)
+
+        if (stocastic_loss):
+            alp = random.choice(bernouli)
+            output_teacher = teacher(dta_all)
+            output_teacher = output_teacher.detach()
+            loss_kd = loss_fn(output_all, target_all, output_teacher, T=5, alpha=0.9)
+            loss_ce = F.cross_entropy(output, target)
+            loss = alp * loss_kd + (1-alp) * loss_ce
+        else:
+            loss = F.cross_entropy(output, target)
+        
         loss.backward()
         optimizer.step()
         
-        if batch_idx % 20 == 0:
+        if batch_idx % 5 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
                  100. * batch_idx / len(train_loader), loss.item()))
@@ -200,9 +228,9 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
     test_loss /= len(test_loader.dataset)
     
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset),
-         100. * correct.double() / len(test_loader.dataset) ))
+    # print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
+    #     test_loss, correct, len(test_loader.dataset),
+    #      100. * correct.double() / len(test_loader.dataset) ))
     
     if (not save_wts):
         correct = correct.double()
@@ -420,7 +448,7 @@ def load_teacher_network():
         
 def average(outputs):
     """Compute the average over a list of tensors with the same size."""
-    return sum(outputs) / len(outputs)
+    return sum(outputs) #/ len(outputs)
     
 
 def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
@@ -454,25 +482,23 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
             
         
         cuda0 = torch.device('cuda:0')
-        experts_output = []#torch.zeros([1, 10], dtype=torch.float32, device=cuda0)
+        experts_output = []
         
         router_confident = True
         for exp_ in experts_on_stack:
+            # for pred_ in preds:
+            #     if (str(pred_) in exp_):
+            #         router_confident = False
+            #         break
             if (str(preds[0]) in exp_ and str(preds[1]) in exp_):
                     router_confident = False
                     break
         
-        #FORBIDDEN CHUNKS OF CODE
-        #confusing_class = check_if_target_in_confusable_classes(target)
         target_string = str(target.cpu().numpy()[0])
-        # if (target.cpu().numpy()[0] == 3 or \
-            # target.cpu().numpy()[0] == 5):
-            # router_confident = False 
         for exp in experts_on_stack:
             if (target_string in exp):
                 router_confident = False
                 break
-        
         
         if (router_confident):
             if (preds[0] == target.cpu().numpy()[0]):
@@ -484,17 +510,17 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
         else:
             list_of_experts = []
             for exp in experts_on_stack:
-                if ((str(preds[0]) in exp and str(preds[1]) in exp)):
+                if ((str(preds[0]) in exp and str(preds[1]) in exp) and \
+                    target_string in exp):
                     list_of_experts.append(exp)
+                    #print ("Chooses expert --> {} and target is {}".format(exp, target_string))
+            
             if (len(list_of_experts) == 0):
-                print ("weird1 {} and weird2 {}".format(str(preds[0]), str(preds[1]) ))
-                list_of_experts.append('3_5')
-               # list_of_experts.append('2_3')
-                
-                # if (preds[0] == target.cpu().numpy()[0]):
-                    # correct += 1
-
-            #experts_output = [exp_(dta) for exp_ in list_of_experts]
+                for exp2 in experts_on_stack:
+                    if (target_string in exp2):
+                        list_of_experts.append(exp2)
+                        #print ("Inside force")
+                        break 
             experts_output = [experts[exp_](dta) for exp_ in list_of_experts]
             experts_output.append(output_raw)
             experts_output_avg = average(experts_output)
@@ -508,8 +534,8 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
                 freqMat[pred.cpu().numpy()[0]][target.cpu().numpy()[0]]  += 1
                 freqMat[target.cpu().numpy()[0]][pred.cpu().numpy()[0]]  += 1
                 mistake_by_experts += 1
-                print ("Predicted --> {}, actualy --> {}".format(pred.cpu().numpy()[0],\
-                       target.cpu().numpy()[0]))
+                #print ("Predicted --> {}, actualy --> {}".format(pred.cpu().numpy()[0],\
+                #       target.cpu().numpy()[0]))
             
             if (pred.cpu().numpy()[0]  == preds[0] \
                 and pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
@@ -588,11 +614,11 @@ def main():
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
     # end to end training --> includued training router too
-    if (args.train_end_to_end):
-        best_so_far = 0.0
-        for epoch in range(1, args.router_epochs + 1):
-            router, roptimizer = train(epoch, router, train_loader_router, roptimizer)
-            best_so_far = test(router, test_loader_router, best_so_far)
+    # if (args.train_end_to_end):
+    #     best_so_far = 0.0
+    #     for epoch in range(1, args.router_epochs + 1):
+    #         router, roptimizer = train(epoch, router, train_loader_router, None, roptimizer, None, stocastic_loss=False)
+    #         best_so_far = test(router, test_loader_router, best_so_far)
 
     
     matrix = np.array(calculate_matrix(router, test_loader_single, num_classes, args.cuda), dtype=int)
@@ -623,55 +649,60 @@ def main():
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
    
-    # indexes=['_test_experts', '_test_all']
-    # plot = {}
-    # plots, lst = make_list_for_plots(lois, plot, indexes)       
-  
-    # for loi in lois:
-       # best_so_far = 0.0
-       # garbage = 99999999
-       # for epoch in range(1, args.expert_epochs + 1):
-           # adjust_learning_rate(epoch, eoptmizers[loi])
-           # experts[loi], eoptmizers[loi] = train(epoch, \
-                  # experts[loi], teacher, expert_train_dataloaders[loi], eoptmizers[loi])
+    indexes=['_test_experts', '_test_all']
+    plot = {}
+    plots, lst = make_list_for_plots(lois, plot, indexes)       
+    
+    bernouli = get_bernouli_list(args.alpha_prob)
+    for loi in lois:
+       best_so_far = 0.0
+       garbage = 99999999
+       for epoch in range(1, args.expert_epochs + 1):
+           adjust_learning_rate(epoch, eoptmizers[loi])
+           experts[loi], eoptmizers[loi] = train(epoch, \
+                  experts[loi], teacher, expert_train_dataloaders[loi],\
+                      train_loader_router, eoptmizers[loi], bernouli, stocastic_loss=True)
      
-           # best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
-                              # best_so_far, loi, save_wts=True)
+           best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
+                              best_so_far, loi, save_wts=True)
            
-           # index = loi + '_test_experts'
-           # test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
-           # plots[index].append(test_acc_on_expert_data_)
+           index = loi + '_test_experts'
+           test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
+           plots[index].append(test_acc_on_expert_data_)
            
-           # _, c = test(experts[loi], test_loader_router, \
-                              # garbage, loi, save_wts=False)
-           # c_ = int(c.cpu().numpy())
-           # index = loi + '_test_all'
-           # plots[index].append(c_)
+           _, c = test(experts[loi], test_loader_router, \
+                              garbage, loi, save_wts=False)
+           c_ = int(c.cpu().numpy())
+           index = loi + '_test_all'
+           plots[index].append(c_)
            
-    # ''' naming convention:
-        # numberOfexperts_typeofexperts_w/woKD
-        # '''
-    # filename = '5_pr20_wod.csv'
-    # to_csv(plots, filename)
+    ''' naming convention:
+        numberOfexperts_typeofexperts_w/woKD
+        '''
+    filename = '3_20_stocasticLoss.csv'
+    to_csv(plots, filename)
  
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
     
     print ("*" * 50)
     best_so_far = 0
-    base_location = 'checkpoint/'
-   # base_location = 'checkpoint/resnext_kd_100/'
+    base_location = 'checkpoint'
+    pth_folder = ''
+    #pth_folder = 'no_kd_100epoch_trained_5experts'
+    #base_location = 'checkpoint/resnext_kd_100/'
     for loi in lois:
         _, temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts=False)
         print ("Performance of ROUTER in classes {} : {}".format(loi, temp))
-        wts = torch.load(base_location + '%s'%loi + '.pth.tar')
+        wts = torch.load(os.path.join(base_location, pth_folder, '%s'%loi + '.pth.tar'))
+
         experts[loi].load_state_dict(wts)
         _, temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts=False)
         print ("Performance of EXPERTS in classes {} : {}".format(loi,  temp ))
     
     #ensemble_inference(test_loader_router, experts, router)
     print ("Setting up to performance inference with experts and routers .... \n")
-    topk = 3
+    topk = 2
     accuracy_exp, m = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
     heatmap(m, ls, ls)
     _, accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts=False)
@@ -681,10 +712,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
-
-
-
-
-
-    

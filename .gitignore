@@ -21,3 +21,5 @@
 # all demo png and csv files
 *.png
 *.csv
+
+/.vscode
