@@ -36,7 +36,7 @@ from torch.optim.lr_scheduler import StepLR
 import models.cifar as models
 
 from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, \
-calculate_matrix, make_list_for_plots
+calculate_matrix, make_list_for_plots, to_csv
 from ms_net_utils import *
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
@@ -47,7 +47,7 @@ parser.add_argument('--test-batch', default=32, type=int, metavar='N',
                     help='test batchsize')
 
 
-parser.add_argument('--schedule', type=int, nargs='+', default=[50, 100, 130],
+parser.add_argument('--schedule', type=int, nargs='+', default=[60, 120, 180],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--train_end_to_end', action='store_true',
                     help='train from router to experts')
@@ -56,7 +56,7 @@ parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
 parser.add_argument('--router_epochs', type=int, default=1, metavar='N',
                     help='number of epochs to train (default: 10)')
 ###############################################################################
-parser.add_argument('--expert_epochs', type=int, default=150, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=200, metavar='N',
                     help='number of epochs to train experts')
 ##########################################################################
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
@@ -65,6 +65,9 @@ parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.5)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
+
+parser.add_argument('--initialize_with_router', action='store_true', default=True)
+
 parser.add_argument('--cuda', action='store_true', default=True,
                     help='enable CUDA training')
 parser.add_argument('--seed', type=int, default=10, metavar='S',
@@ -83,7 +86,7 @@ parser.add_argument('--finetune_experts', action='store_true', default=True,
 
 ###########################################################################
 
-parser.add_argument('--alpha_prob', type=int, default=80, help='alpha probability')
+parser.add_argument('--alpha_prob', type=int, default=50, help='alpha probability')
 
 parser.add_argument('--topk', type=int, default=3, metavar='N',
                     help='how many experts you want?')
@@ -119,6 +122,7 @@ parser.add_argument('--r1', default=0.3, type=float, help='aspect of erasing are
 args = parser.parse_args()
 
 state = {k: v for k, v in args._get_kwargs()}
+print (state)
 
 model_weights = {}
 
@@ -189,6 +193,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
         dta, target = Variable(dta), Variable(target)
         dta_all, target_all = Variable(dta_all), Variable(target_all)
         optimizer.zero_grad()
+        
         output = model(dta)
         output_all = model(dta_all)
 
@@ -196,7 +201,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
             alp = random.choice(bernouli)
             output_teacher = teacher(dta_all)
             output_teacher = output_teacher.detach()
-            loss_kd = loss_fn(output_all, target_all, output_teacher, T=5, alpha=0.9)
+            loss_kd = loss_fn(output_all, target_all, output_teacher, T=5, alpha=1.0)
             loss_ce = F.cross_entropy(output, target)
             loss = alp * loss_kd + (1-alp) * loss_ce
         else:
@@ -205,7 +210,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
         loss.backward()
         optimizer.step()
         
-        if batch_idx % 5 == 0:
+        if batch_idx % 20 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
                  100. * batch_idx / len(train_loader), loss.item()))
@@ -228,9 +233,9 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
     test_loss /= len(test_loader.dataset)
     
-    # print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
-    #     test_loss, correct, len(test_loader.dataset),
-    #      100. * correct.double() / len(test_loader.dataset) ))
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset),
+         100. * correct.double() / len(test_loader.dataset) ))
     
     if (not save_wts):
         correct = correct.double()
@@ -408,15 +413,25 @@ def load_expert_networks_and_optimizers(model, lois):
                     block_name=args.block_name)
     
     #model = torch.nn.DataParallel(model).cuda()
-    model = model.cuda()
+    #model = model.cuda()
     chk = torch.load('./ck_backup/cifar-10/preresnet-depth-20/checkpoint/model_best.pth.tar')
-    model.load_state_dict(chk['state_dict'])
+    #model.load_state_dict(chk['state_dict'])
  
     
     for loi in lois:
-        experts[loi] = model
+        experts[loi] = models.__dict__['preresnet'](
+                    num_classes=10,
+                    depth=20,#args.depth,
+                    block_name=args.block_name)
+        
+        experts[loi] = experts[loi].cuda()
+        
+        args.initialize_with_router = False
+        if (args.initialize_with_router):
+            experts[loi].load_state_dict(chk['state_dict'])
+ 
         # for now
-        args.finetune_experts = True
+        args.finetune_experts = False
         if (args.finetune_experts):
             eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer2.parameters()},
                                          {'params': experts[loi].layer3.parameters()},
@@ -425,7 +440,7 @@ def load_expert_networks_and_optimizers(model, lois):
             # usually lets learning rateto 0.001 for finetuning with subset sampler
             # set it to very lowe value, say 0.00001
         else:
-            eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.001, momentum=0.9,
+            eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.1, momentum=0.9,
                       weight_decay=5e-4)
         
     return experts, eoptimizers
@@ -589,11 +604,6 @@ def ensemble_inference(test_loader, experts, router):
 
 
 
-def to_csv(plots, name):  
-    data_ = pd.DataFrame.from_dict(plots)
-    data_.to_csv(name, index=False)
-
-
 def adjust_learning_rate(epoch, optimizer):
     if epoch in args.schedule:
         print ("\n\n***************CHANGED LEARNING RATE TO\n*********************\n")
@@ -641,9 +651,9 @@ def main():
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois)
     teacher = load_teacher_network()
     
-    ##args.evaluate_only_router = True
+    #args.evaluate_only_router = True
     if (args.evaluate_only_router):
-        test(teacher, expert_test_dataloaders[lois], roptimizer, "router")
+        test(teacher, test_loader_router, best_so_far=None, name='_', save_wts=False)
         return 
     
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
@@ -654,6 +664,7 @@ def main():
     plots, lst = make_list_for_plots(lois, plot, indexes)       
     
     bernouli = get_bernouli_list(args.alpha_prob)
+    print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
     for loi in lois:
        best_so_far = 0.0
        garbage = 99999999
@@ -679,7 +690,7 @@ def main():
     ''' naming convention:
         numberOfexperts_typeofexperts_w/woKD
         '''
-    filename = '3_20_stocasticLoss.csv'
+    filename = '3_20_stocasticLoss_random_initialization.csv'
     to_csv(plots, filename)
  
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)

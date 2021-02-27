@@ -11,9 +11,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.autograd import Variable
 import torch.nn.functional as F
+import pandas as pd
 
 __all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix',\
-           'make_list_for_plots']
+           'make_list_for_plots', 'to_csv']
 
 def sort_by_value(dict_, reverse=False):
     
@@ -40,8 +41,6 @@ def return_topk_args_from_heatmap(matrix, n, topk):
     dict_sorted = sort_by_value(dict_tuple, reverse=True)    
     for k, v in dict_sorted.items():
         sub_1, sub_2 = int(k[0]), int(k[2])
-        #if (sub_1 == 1 or sub_1 == 9 or sub_2 == 1 or sub_2 == 9): # temp code
-        #    continue # temp code
         tuple_list.append([sub_1, sub_2])
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
@@ -141,8 +140,8 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
             freqMat[s][d] += 1
             freqMat[d][s] += 1
             tot = tot + 1#    
-#            if (tot == stop_at):
-#                break
+            # if (tot == stop_at):
+            #     break
 
     return freqMat
 
@@ -159,3 +158,7 @@ def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
     if is_best:
         torch.save(model_weights, filepath)
         print ("******* Saved New PTH *********")
+
+def to_csv(plots, name):  
+    data_ = pd.DataFrame.from_dict(plots)
+    data_.to_csv(name, index=False)
