@@ -86,9 +86,9 @@ parser.add_argument('--finetune_experts', action='store_true', default=True,
 
 ###########################################################################
 
-parser.add_argument('--alpha_prob', type=int, default=50, help='alpha probability')
+parser.add_argument('--alpha_prob', type=int, default=10, help='alpha probability')
 
-parser.add_argument('--topk', type=int, default=3, metavar='N',
+parser.add_argument('--topk', type=int, default=5, metavar='N',
                     help='how many experts you want?')
 ###########################################################################
 
@@ -210,7 +210,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
         loss.backward()
         optimizer.step()
         
-        if batch_idx % 20 == 0:
+        if batch_idx % 50 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
                  100. * batch_idx / len(train_loader), loss.item()))
@@ -664,6 +664,7 @@ def main():
     plots, lst = make_list_for_plots(lois, plot, indexes)       
     
     bernouli = get_bernouli_list(args.alpha_prob)
+
     print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
     for loi in lois:
        best_so_far = 0.0
@@ -690,7 +691,7 @@ def main():
     ''' naming convention:
         numberOfexperts_typeofexperts_w/woKD
         '''
-    filename = '3_20_stocasticLoss_random_initialization.csv'
+    filename = '3_20_stocasticLoss_random_initialization_ALPHA_10.csv'
     to_csv(plots, filename)
  
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
@@ -700,8 +701,10 @@ def main():
     best_so_far = 0
     base_location = 'checkpoint'
     pth_folder = ''
+    #pth_folder = 'stocashtic_loss_3_experts_pre20_random_init'
     #pth_folder = 'no_kd_100epoch_trained_5experts'
     #base_location = 'checkpoint/resnext_kd_100/'
+    
     for loi in lois:
         _, temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts=False)
         print ("Performance of ROUTER in classes {} : {}".format(loi, temp))

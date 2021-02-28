@@ -41,6 +41,8 @@ def return_topk_args_from_heatmap(matrix, n, topk):
     dict_sorted = sort_by_value(dict_tuple, reverse=True)    
     for k, v in dict_sorted.items():
         sub_1, sub_2 = int(k[0]), int(k[2])
+        # if ( (sub_1 == 3 and sub_2 == 5) or (sub_1 == 2 and sub_2 == 3) or (sub_1 == 1 and sub_2 == 9)):
+        #     continue
         tuple_list.append([sub_1, sub_2])
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
