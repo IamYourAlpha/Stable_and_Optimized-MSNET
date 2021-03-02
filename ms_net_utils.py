@@ -14,7 +14,7 @@ import torch.nn.functional as F
 import pandas as pd
 
 __all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix',\
-           'make_list_for_plots', 'to_csv']
+           'make_list_for_plots', 'to_csv', 'imshow']
 
 def sort_by_value(dict_, reverse=False):
     
@@ -147,12 +147,12 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
 
     return freqMat
 
-def imshow(img):
+def imshow(img, f_name):
     img = img / 2 + 0.5     # unnormalize
     npimg = img.numpy() # pytorch tensor is usually (n, C(0), H(1), W(2))
     plt.imshow(np.transpose(npimg, (1, 2, 0))) # numpy needs (H(1), W(2), C(0))
-    plt.show()
-
+    plt.savefig(f_name)
+    
 def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
     filepath = os.path.join("checkpoint", filename)
     print (filepath)
