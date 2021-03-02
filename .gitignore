@@ -23,5 +23,5 @@
 *.csv
 
 /.vscode
-
+/corrected_images/
 *.tar
