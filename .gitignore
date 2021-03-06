@@ -25,3 +25,4 @@
 /.vscode
 /corrected_images/
 *.tar
+/checkpoint_experts/

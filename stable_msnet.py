@@ -2,7 +2,8 @@
 """
 Created on Fri Jan 29 22:59:11 2021
 
-@author: intisar
+@author: intisar chowdhury
+inst: The University of Aizu.
 """
 
 # In[]:
@@ -47,18 +48,18 @@ parser.add_argument('--test-batch', default=32, type=int, metavar='N',
                     help='test batchsize')
 
 
-parser.add_argument('--schedule', type=int, nargs='+', default=[60, 120, 180],
+parser.add_argument('--schedule', type=int, nargs='+', default=[20, 40],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--train_end_to_end', action='store_true',
                     help='train from router to experts')
 parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--router_epochs', type=int, default=1, metavar='N',
+parser.add_argument('--router_epochs', type=int, default=60, metavar='N',
                     help='number of epochs to train (default: 10)')
 
 parser.add_argument('--corrected_images', type=str, default='./corrected_images/')
 ###############################################################################
-parser.add_argument('--expert_epochs', type=int, default=200, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=60, metavar='N',
                     help='number of epochs to train experts')
 ##########################################################################
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
@@ -88,19 +89,20 @@ parser.add_argument('--finetune_experts', action='store_true', default=True,
 parser.add_argument('--save_images', action='store_true', default=True)
 ###########################################################################
 
-parser.add_argument('--alpha_prob', type=int, default=70, help='alpha probability')
+parser.add_argument('--alpha_prob', type=int, default=10, help='alpha probability')
 
 parser.add_argument('--topk', type=int, default=10, metavar='N',
                     help='how many experts you want?')
 ###########################################################################
 
-
-
-
 parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
+
+
 # Architecture details
-parser.add_argument('--depth', type=int, default=20, help='Model depth.')
+parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet',
+                    help='backbone architecture')
+parser.add_argument('--depth', type=int, default=8, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock')
 parser.add_argument('--learning_rate', type=float, default=0.1, metavar='LR',
                     help='initial learning rate to train')
@@ -118,13 +120,15 @@ parser.add_argument('--p', default=0.3, type=float, help='Random Erasing probabi
 parser.add_argument('--sh', default=0.3, type=float, help='max erasing area')
 parser.add_argument('--r1', default=0.3, type=float, help='aspect of erasing area')
     
-
-
-
 args = parser.parse_args()
 
 state = {k: v for k, v in args._get_kwargs()}
+
+state = str(state)
 print (state)
+with open('state.txt', 'w') as f:
+    f.write(state)
+f.close()
 
 model_weights = {}
 
@@ -146,21 +150,6 @@ random.seed(args.manualSeed)
 torch.manual_seed(args.manualSeed)
 if use_cuda:
     torch.cuda.manual_seed_all(args.manualSeed)
-
-
-def doPlot(val_scores):
-
-    scores = []
-    scores = [ h.cpu().numpy() for h in val_scores]
-    print (scores)
-    plt.title("Teacher CNN")
-    plt.xlabel("Training Epochs")
-    plt.ylabel("Validation Accuracy")
-    plt.plot(range(1, args.epochs+1), scores)
-    plt.ylim( (0,1.) )
-    plt.xticks(np.arange(1, args.epochs+1, 1.0))
-    plt.show()
-
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
@@ -185,7 +174,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
     teacher.eval()
     loss_fn = distillation
     #correct = 0
-    print ("\n \n {} Stocastic Loss is : {} {} \n \n ".format("*"*20, stocastic_loss, "*"*20))
+    #print ("\n \n {} Stocastic Loss is : {} {} \n \n ".format("*"*20, stocastic_loss, "*"*20))
     for batch_idx, (dta, target) in enumerate(train_loader):
         dta_all, target_all = next(iter(train_loader_all_data))
         if args.cuda:
@@ -201,9 +190,9 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
 
         if (stocastic_loss):
             alp = random.choice(bernouli)
-            output_teacher = teacher(dta_all)
-            output_teacher = output_teacher.detach()
-            loss_kd = loss_fn(output_all, target_all, output_teacher, T=5, alpha=1.0)
+            #output_teacher = teacher(dta_all) # disable knowledge dist.
+            #output_teacher = output_teacher.detach()
+            loss_kd = F.cross_entropy(output_all, target_all)#loss_fn(output_all, target_all, output_teacher, T=5, alpha=1.0)
             loss_ce = F.cross_entropy(output, target)
             loss = alp * loss_kd + (1-alp) * loss_ce
         else:
@@ -212,7 +201,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
         loss.backward()
         optimizer.step()
         
-        if batch_idx % 50 == 0:
+        if batch_idx % 80 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(dta), len(train_loader.dataset),
                  100. * batch_idx / len(train_loader), loss.item()))
@@ -229,7 +218,7 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
             dta, target = dta.cuda(), target.cuda()
         dta, target = Variable(dta, volatile=True), Variable(target)
         output = model(dta)
-        output = F.softmax(output)
+        output = F.softmax(output, dim=1)
         test_loss += F.cross_entropy(output, target).item() # sum up batch loss
         pred = torch.argsort(output, dim=1, descending=True)[0:, 0]
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
@@ -390,14 +379,15 @@ def prepeare_dataset_for_experts(matrix, values):
 
 
 def make_router_and_optimizer(num_classes, load_weights=False):
-    model = models.__dict__['preresnet'](
+
+    model = models.__dict__[args.arch](
                     num_classes=num_classes,
-                    depth=20,
+                    depth=args.depth,
                     block_name=args.block_name)
     if (load_weights):
         #model = torch.nn.DataParallel(model).cuda()
         model = model.cuda()
-        chk = torch.load('./ck_backup/cifar-10/preresnet-depth-20/checkpoint/model_best.pth.tar')
+        chk = torch.load('./ck_backup/cifar-10/%s-depth-%s/checkpoint/model_best.pth.tar'%(args.arch, args.depth))
         model.load_state_dict(chk['state_dict'])
     
     optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9,
@@ -408,39 +398,26 @@ def make_router_and_optimizer(num_classes, load_weights=False):
 def load_expert_networks_and_optimizers(model, lois):
     experts = {}
     eoptimizers = {}
-    
-    model = models.__dict__['preresnet'](
-                    num_classes=10,
-                    depth=20,#args.depth,
-                    block_name=args.block_name)
-    
-    #model = torch.nn.DataParallel(model).cuda()
-    #model = model.cuda()
-    chk = torch.load('./ck_backup/cifar-10/preresnet-depth-20/checkpoint/model_best.pth.tar')
-    #model.load_state_dict(chk['state_dict'])
-    
-    
+    chk = torch.load('./ck_backup/cifar-10/%s-depth-%s/checkpoint/model_best.pth.tar'%(args.arch, args.depth))
     for loi in lois:
-        experts[loi] = models.__dict__['preresnet'](
+        experts[loi] = models.__dict__[args.arch](
                     num_classes=10,
-                    depth=20,#args.depth,
+                    depth=args.depth,
                     block_name=args.block_name)
         
         experts[loi] = experts[loi].cuda()
         
-        args.initialize_with_router = False
+        args.initialize_with_router = True
         if (args.initialize_with_router):
             experts[loi].load_state_dict(chk['state_dict'])
- 
-        # for now
-        args.finetune_experts = False
+
+        args.finetune_experts = True
         if (args.finetune_experts):
             eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer2.parameters()},
                                          {'params': experts[loi].layer3.parameters()},
                                          {'params': experts[loi].fc.parameters()}],
                                          lr=0.01, momentum=0.9, weight_decay=5e-4)
-            # usually lets learning rateto 0.001 for finetuning with subset sampler
-            # set it to very lowe value, say 0.00001
+            
         else:
             eoptimizers[loi] = optim.SGD(experts[loi].parameters(), lr=0.1, momentum=0.9,
                       weight_decay=5e-4)
@@ -450,6 +427,8 @@ def load_expert_networks_and_optimizers(model, lois):
 
 
 def load_teacher_network():
+    """ return the best teacher network with state_dict. """
+
     teacher = models.__dict__['resnext'](
                     cardinality=8,
                     num_classes=10,
@@ -469,19 +448,27 @@ def average(outputs):
     
 
 def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
+
+    """ function to perform evaluation with experts
+    params
+    -------
+    test_loader: data loader for testing dataset
+    experts: dictionary of expert Neural Networks
+    router: router network
+    topK: upto how many top-K you want to re-check?
+    """
     freqMat = np.zeros((10, 10)) # debug
     router.eval()
     experts_on_stack = []
     for k, v in experts.items():
         experts[k].eval()
         experts_on_stack.append(k)
+    
     count = 0
     ext_ = '.png'
     correct = 0
     by_experts, by_router = 0, 0
     mistake_by_experts, mistake_by_router = 0, 0
-    
-    ''' debug mode on'''
     agree, disagree = 0, 0
 
     for dta, target in test_loader:
@@ -527,23 +514,19 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
         else:
             list_of_experts = []
             for exp in experts_on_stack: #and
-                if ((str(preds[0]) in exp or str(preds[1]) in exp) and \
-                    target_string in exp):
+                if ((str(preds[0]) in exp and str(preds[1]) in exp)):
                     list_of_experts.append(exp)
-                    #print ("Chooses expert --> {} and target is {}".format(exp, target_string))
-            
-            # if (len(list_of_experts) == 0):
-            #     for exp2 in experts_on_stack:
-            #         if (target_string in exp2):
-            #             list_of_experts.append(exp2)
-            #             #print ("Inside force")
-            #             break 
+            if (len(list_of_experts) == 0):
+                for exp2 in experts_on_stack:
+                    if (target_string in exp2):
+                        list_of_experts.append(exp2)
+                        break 
             experts_output = [experts[exp_](dta) for exp_ in list_of_experts]
-            experts_output.append(output_raw*1.0)
+            experts_output.append(output_raw * 0.05)
             experts_output_avg = average(experts_output)
             experts_output_prob = F.softmax(experts_output_avg, dim=1)
-            
             pred = torch.argsort(experts_output_prob, dim=1, descending=True)[0:, 0]
+            
             if (pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
                 correct += 1
                 by_experts += 1
@@ -551,14 +534,14 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
                 freqMat[pred.cpu().numpy()[0]][target.cpu().numpy()[0]]  += 1
                 freqMat[target.cpu().numpy()[0]][pred.cpu().numpy()[0]]  += 1
                 mistake_by_experts += 1
-
-            
             if (pred.cpu().numpy()[0]  == preds[0] \
                 and pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
                 agree += 1
             elif (pred.cpu().numpy()[0]  != preds[0]\
                   and pred.cpu().numpy()[0] == target.cpu().numpy()[0]):
                 disagree += 1
+
+                # Save misclassified samples
                 args.save_images = False
                 if (args.save_images):
                     data_numpy = dta[0].cpu() # transfer to the CPU.
@@ -567,9 +550,6 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
                         os.makedirs(args.corrected_images)
                     imshow(data_numpy, os.path.join(args.corrected_images, f_name))
             
-     
-#        if (count == 1000):
-#            break
     print ("Router and experts agrees with {} samplers \n and router and experts disagres for {}".format(agree, disagree))        
     print ("Routers: {} \n Experts: {}".format(by_router, by_experts))
     print ("Mistakes by Routers: {} \n Mistakes by Experts: {}".format(mistake_by_router, mistake_by_experts))
@@ -609,9 +589,6 @@ def ensemble_inference(test_loader, experts, router):
         test_loss, correct, len(test_loader.dataset),
          100. * correct.double() / len(test_loader.dataset) ))
 
-
-
-
 def adjust_learning_rate(epoch, optimizer):
     if epoch in args.schedule:
         print ("\n\n***************CHANGED LEARNING RATE TO\n*********************\n")
@@ -622,11 +599,12 @@ def adjust_learning_rate(epoch, optimizer):
             print ("Lr {}".format(param['lr']))
 
 def main():
- 
     global best_acc
     if not os.path.isdir(args.checkpoint):
         os.makedirs(args.checkpoint)
+    
     train_loader_router, test_loader_router, num_classes, test_loader_single = prepare_dataset_for_router()
+    
     print("==> creating model")
     
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
@@ -652,62 +630,60 @@ def main():
     print ("*"*50)
     
     expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(matrix_args, values)
-    print(expert_train_dataloaders)
-    
-    
-    # need to change the param. router to 'name'
+
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois)
     teacher = load_teacher_network()
     
     #args.evaluate_only_router = True
     if (args.evaluate_only_router):
-        test(teacher, test_loader_router, best_so_far=None, name='_', save_wts=False)
-        return 
+        test(router, test_loader_router, best_so_far=None, name='_', save_wts=False)
+        return
     
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
-   
     indexes=['_test_experts', '_test_all']
+    
     plot = {}
+
     plots, lst = make_list_for_plots(lois, plot, indexes)       
     
     bernouli = get_bernouli_list(args.alpha_prob)
 
-    # print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
-    # for loi in lois:
-    #    best_so_far = 0.0
-    #    garbage = 99999999
-    #    for epoch in range(1, args.expert_epochs + 1):
-    #        adjust_learning_rate(epoch, eoptmizers[loi])
-    #        experts[loi], eoptmizers[loi] = train(epoch, \
-    #               experts[loi], teacher, expert_train_dataloaders[loi],\
-    #                   train_loader_router, eoptmizers[loi], bernouli, stocastic_loss=False)
+    print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
+    for loi in lois:
+       best_so_far = 0.0
+       garbage = 99999999
+       for epoch in range(1, args.expert_epochs + 1):
+           adjust_learning_rate(epoch, eoptmizers[loi])
+           experts[loi], eoptmizers[loi] = train(epoch, \
+                  experts[loi], teacher, expert_train_dataloaders[loi],\
+                      train_loader_router, eoptmizers[loi], bernouli, stocastic_loss=True)
      
-    #        best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
-    #                           best_so_far, loi, save_wts=True)
+           best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
+                              best_so_far, loi, save_wts=True)
            
-    #        index = loi + '_test_experts'
-    #        test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
-    #        plots[index].append(test_acc_on_expert_data_)
+           index = loi + '_test_experts'
+           test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
+           plots[index].append(test_acc_on_expert_data_)
            
-    #        _, c = test(experts[loi], test_loader_router, \
-    #                           garbage, loi, save_wts=False)
-    #        c_ = int(c.cpu().numpy())
-    #        index = loi + '_test_all'
-    #        plots[index].append(c_)
+           _, c = test(experts[loi], test_loader_router, \
+                              garbage, loi, save_wts=False)
+           c_ = int(c.cpu().numpy())
+           index = loi + '_test_all'
+           plots[index].append(c_)
            
-    # ''' naming convention:
-    #     numberOfexperts_typeofexperts_w/woKD
-    #     '''
-    # filename = '10_pre20_wod_random_init.csv'
-    # to_csv(plots, filename)
+    ''' naming convention:
+        numberOfexperts_typeofexperts_w/woKD
+        '''
+    filename = 'oracle_resnet8_stocasticloss_fine_tuning_alpha_10.csv'
+    to_csv(plots, filename)
  
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
     
     print ("*" * 50)
     best_so_far = 0
-    base_location = 'checkpoint'
+    base_location = 'checkpoint_experts'
     pth_folder = ''
     #pth_folder = 'stocashtic_loss_3_experts_pre20_random_init'
     #pth_folder = 'no_kd_100epoch_trained_5experts'
@@ -722,10 +698,10 @@ def main():
         _, temp = test(experts[loi], expert_test_dataloaders[loi], best_so_far, loi, save_wts=False)
         print ("Performance of EXPERTS in classes {} : {}".format(loi,  temp ))
     
-    ensemble_inference(test_loader_router, experts, router)
+    #ensemble_inference(test_loader_router, experts, router)
     print ("Setting up to performance inference with experts and routers .... \n")
     topk = 5
-    #accuracy_exp, m = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
+    accuracy_exp, m = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
     heatmap(m, ls, ls)
     _, accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts=False)
     print ("Performance ---> Router ACC: {} \n ....         Experts: {}".format(accuracy_router, accuracy_exp))

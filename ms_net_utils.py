@@ -126,25 +126,19 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
     for dta, target in test_loader_single:
         if cuda:
             dta, target = dta.cuda(), target.cuda()
-        dta, target = Variable(dta, volatile=True), Variable(target)
-        output = model(dta)
-        output = F.softmax(output)
-        pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
-        pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
-        if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
-        
-        # if (pred1.cpu().numpy()[0] != target.cpu().numpy()[0]):
-            # s = pred1.cpu().numpy()[0]
-            # d = target.cpu().numpy()[0]
-            
-            s = pred2.cpu().numpy()[0]
-            d = pred1.cpu().numpy()[0]
-            freqMat[s][d] += 1
-            freqMat[d][s] += 1
-            tot = tot + 1#    
+        with torch.no_grad():
+            output = model(dta)
+            output = F.softmax(output, dim=1)
+            pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
+            pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
+            if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
+                s = pred2.cpu().numpy()[0]
+                d = pred1.cpu().numpy()[0]
+                freqMat[s][d] += 1
+                freqMat[d][s] += 1
+            #    tot = tot + 1    
             # if (tot == stop_at):
             #     break
-
     return freqMat
 
 def imshow(img, f_name):
@@ -154,7 +148,7 @@ def imshow(img, f_name):
     plt.savefig(f_name)
     
 def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
-    filepath = os.path.join("checkpoint", filename)
+    filepath = os.path.join("checkpoint_experts", filename)
     print (filepath)
     #torch.save(model_weights, filepath)
     if is_best:
