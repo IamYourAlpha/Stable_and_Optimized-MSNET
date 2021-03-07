@@ -14,7 +14,7 @@ import torch.nn.functional as F
 import pandas as pd
 
 __all__ = ['return_topk_args_from_heatmap', 'heatmap', 'save_checkpoint', 'calculate_matrix',\
-           'make_list_for_plots', 'to_csv']
+           'make_list_for_plots', 'to_csv', 'imshow']
 
 def sort_by_value(dict_, reverse=False):
     
@@ -32,15 +32,15 @@ def return_topk_args_from_heatmap(matrix, n, topk):
 
     for i in range(0, n):
         for j in range(0, n):
-            if ( not visited[i][j] and not visited[j][i] \
-                and matrix[i][j]>0):
-                    dict_tuple[str(i) + '_' + str(j)] =  matrix[i][j]
-                    visited[i][j] = 1
-                    visited[j][i] = 1
+            if ( not visited[i][j] and not visited[j][i] and matrix[i][j]>0):
+                dict_tuple[str(i) + "_" + str(j)] =  matrix[i][j]
+                visited[i][j] = 1
+                visited[j][i] = 1
                     
     dict_sorted = sort_by_value(dict_tuple, reverse=True)    
     for k, v in dict_sorted.items():
-        sub_1, sub_2 = int(k[0]), int(k[2])
+        sub_1, sub_2 = k.split("_")
+        sub_1, sub_2 = int(sub_1), int(sub_2)
         # if ( (sub_1 == 3 and sub_2 == 5) or (sub_1 == 2 and sub_2 == 3) or (sub_1 == 1 and sub_2 == 9)):
         #     continue
         tuple_list.append([sub_1, sub_2])
@@ -120,41 +120,44 @@ def make_list_for_plots(lois, plot, indexes):
 
 def calculate_matrix(model, test_loader_single, num_classes, cuda):
     model.eval()
-    stop_at = 10
+    stop_at = 100
     tot = 0
     freqMat = np.zeros((num_classes, num_classes))
     for dta, target in test_loader_single:
         if cuda:
             dta, target = dta.cuda(), target.cuda()
-        dta, target = Variable(dta, volatile=True), Variable(target)
-        output = model(dta)
-        output = F.softmax(output)
-        pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
-        pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
-        if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
-        
-        # if (pred1.cpu().numpy()[0] != target.cpu().numpy()[0]):
-            # s = pred1.cpu().numpy()[0]
-            # d = target.cpu().numpy()[0]
-            
-            s = pred2.cpu().numpy()[0]
-            d = pred1.cpu().numpy()[0]
-            freqMat[s][d] += 1
-            freqMat[d][s] += 1
-            tot = tot + 1#    
+        with torch.no_grad():
+            output = model(dta)
+            output = F.softmax(output, dim=1)
+            pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
+            pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
+            if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
+                s = pred2.cpu().numpy()[0]
+                d = pred1.cpu().numpy()[0]
+                freqMat[s][d] += 1
+                freqMat[d][s] += 1
+            #     tot = tot + 1    
             # if (tot == stop_at):
             #     break
-
     return freqMat
 
-def imshow(img):
+def imshow(img, f_name, fexpertpred=None, fexpertconf=None, frouterpred=None, frouterconf=None):
     img = img / 2 + 0.5     # unnormalize
     npimg = img.numpy() # pytorch tensor is usually (n, C(0), H(1), W(2))
     plt.imshow(np.transpose(npimg, (1, 2, 0))) # numpy needs (H(1), W(2), C(0))
-    plt.show()
-
+    pred = str(fexpertpred)
+    conf = str(fexpertconf)
+    pred_r = str(frouterpred)
+    pred_c = str(frouterconf)
+    res = "Experts prediction: " + pred + " : " + conf + "\n" + "Routers prediction: " + pred_r + ":" + pred_c
+    #plt.text(0,0, res, color='r')
+    plt.text(0, 0, res, style='italic',
+        bbox={'facecolor': 'red', 'alpha': 0.5, 'pad': 10})
+    plt.savefig(f_name)
+    plt.close()
+    
 def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
-    filepath = os.path.join("checkpoint", filename)
+    filepath = os.path.join("checkpoint_experts", filename)
     print (filepath)
     #torch.save(model_weights, filepath)
     if is_best:
