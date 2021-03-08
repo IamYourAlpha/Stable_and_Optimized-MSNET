@@ -102,7 +102,7 @@ parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metava
 # Architecture details
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet',
                     help='backbone architecture')
-parser.add_argument('--depth', type=int, default=8, help='Model depth.')
+parser.add_argument('--depth', type=int, default=20, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock')
 parser.add_argument('--learning_rate', type=float, default=0.1, metavar='LR',
                     help='initial learning rate to train')
@@ -491,12 +491,9 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
             #ref = torch.argsort(output, dim=1, descending=True)[0:, k]
             ref = router_preds[0:, k]
             conf = router_confs[0:, k]
-            preds.append(ref.detach().cpu().numpy()[0])
+            preds.append(ref.detach().cpu().numpy()[0]) # simply put the number. not the graph
             confs.append(conf.detach().cpu().numpy()[0])
-        
-        
-            
-        
+    
         cuda0 = torch.device('cuda:0')
         experts_output = []
         
@@ -521,21 +518,23 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
         else:
             list_of_experts = []
             for exp in experts_on_stack: #and
-                if ((str(preds[0]) in exp and str(preds[1]) in exp)):
+                if ( (str(preds[0]) in exp and str(preds[1]) in exp)):                        
                     list_of_experts.append(exp)
+                    expert_count[exp] += 1
+                    break
            
            
-            if (len(list_of_experts) == 0):
-                for exp2 in experts_on_stack:
-                    if (target_string in exp2):
-                        list_of_experts.append(exp2)
-                        #print ("\nTarget: {} pred1 {}, pred2: {}\n".format(target_string, preds[0], preds[1]))
-                        expert_count[exp2] += 1
-                        break 
+            # if (len(list_of_experts) == 0):
+            #     for exp2 in experts_on_stack:
+            #         if (target_string in exp2):
+            #             list_of_experts.append(exp2)
+            #             #print ("\nTarget: {} pred1 {}, pred2: {}\n".format(target_string, preds[0], preds[1]))
+            #             expert_count[exp2] += 1
+            #             break 
            
-           
+            #and target_string in str(preds[0]) and target_string in str(preds[1])
             experts_output = [experts[exp_](dta) for exp_ in list_of_experts]
-            experts_output.append(output_raw * 0.05)
+            experts_output.append(output_raw)
             experts_output_avg = average(experts_output)
             experts_output_prob = F.softmax(experts_output_avg, dim=1)
             #pred = torch.argsort(experts_output_prob, dim=1, descending=True)[0:, 0]
@@ -703,7 +702,7 @@ def main():
     print ("*" * 50)
     best_so_far = 0
     base_location = 'checkpoint_experts'
-    pth_folder = 'cybercon/resnet8_sl_ft_alpha_5_c10'
+    pth_folder = 'cybercon/resnet20_sl_ft_alpha_5_c10'
     #pth_folder = 'stocashtic_loss_3_experts_pre20_random_init'
     #pth_folder = 'no_kd_100epoch_trained_5experts'
     #base_location = 'checkpoint/resnext_kd_100/'
@@ -719,7 +718,7 @@ def main():
     
     #ensemble_inference(test_loader_router, experts, router)
     print ("Setting up to performance inference with experts and routers .... \n")
-    topk = 3
+    topk = 5
     accuracy_exp, m = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
     heatmap(m, ls, ls)
     _, accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts=False)
