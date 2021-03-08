@@ -22,10 +22,7 @@
 *.png
 *.csv
 
-<<<<<<< HEAD
-=======
 /.vscode
 /corrected_images/
 *.tar
 /checkpoint_experts/
->>>>>>> feature
