@@ -102,7 +102,7 @@ parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metava
 # Architecture details
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet',
                     help='backbone architecture')
-parser.add_argument('--depth', type=int, default=110, help='Model depth.')
+parser.add_argument('--depth', type=int, default=8, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock')
 parser.add_argument('--learning_rate', type=float, default=0.1, metavar='LR',
                     help='initial learning rate to train')
@@ -529,6 +529,7 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
                 for exp2 in experts_on_stack:
                     if (target_string in exp2):
                         list_of_experts.append(exp2)
+                        #print ("\nTarget: {} pred1 {}, pred2: {}\n".format(target_string, preds[0], preds[1]))
                         expert_count[exp2] += 1
                         break 
            
@@ -702,7 +703,7 @@ def main():
     print ("*" * 50)
     best_so_far = 0
     base_location = 'checkpoint_experts'
-    pth_folder = 'cybercon/resnet110_sl_ft_apha_5_c10'
+    pth_folder = 'cybercon/resnet8_sl_ft_alpha_5_c10'
     #pth_folder = 'stocashtic_loss_3_experts_pre20_random_init'
     #pth_folder = 'no_kd_100epoch_trained_5experts'
     #base_location = 'checkpoint/resnext_kd_100/'
