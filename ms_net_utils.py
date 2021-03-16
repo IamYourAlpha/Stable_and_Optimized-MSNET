@@ -41,13 +41,11 @@ def return_topk_args_from_heatmap(matrix, n, topk):
     for k, v in dict_sorted.items():
         sub_1, sub_2 = k.split("_")
         sub_1, sub_2 = int(sub_1), int(sub_2)
-        # if ( (sub_1 == 3 and sub_2 == 5) or (sub_1 == 2 and sub_2 == 3) or (sub_1 == 1 and sub_2 == 9)):
-        #     continue
         tuple_list.append([sub_1, sub_2])
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
             return tuple_list, value_of_tuple
-##    
+    
 #    new_tuple = []
 #    
 #    for keys in tuple_list:
@@ -60,7 +58,6 @@ def return_topk_args_from_heatmap(matrix, n, topk):
 #                new_tuple.append([key2, i])
 #        break
         
-    
    # return new_tuple, value_of_tuple
     #return tuple_list, value_of_tuple
 
@@ -118,7 +115,7 @@ def make_list_for_plots(lois, plot, indexes):
     
     return plot, lst
 
-def calculate_matrix(model, test_loader_single, num_classes, cuda):
+def calculate_matrix(model, test_loader_single, num_classes, cuda, only_top2=True):
     model.eval()
     stop_at = 100
     tot = 0
@@ -131,11 +128,18 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda):
             output = F.softmax(output, dim=1)
             pred1 = torch.argsort(output, dim=1, descending=True)[0:, 0]
             pred2 = torch.argsort(output, dim=1, descending=True)[0:, 1]
-            if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
-                s = pred2.cpu().numpy()[0]
-                d = pred1.cpu().numpy()[0]
-                freqMat[s][d] += 1
-                freqMat[d][s] += 1
+            if (only_top2):
+                if (pred2.cpu().numpy()[0] == target.cpu().numpy()[0]):
+                    s = pred2.cpu().numpy()[0]
+                    d = pred1.cpu().numpy()[0]
+                    freqMat[s][d] += 1
+                    freqMat[d][s] += 1
+            else:
+                if (pred1.cpu().numpy()[0] != target.cpu().numpy()[0]):
+                    s = pred1.cpu().numpy()[0]
+                    d = target.cpu().numpy()[0]
+                    freqMat[s][d] += 1
+                    freqMat[d][s] += 1
             #     tot = tot + 1    
             # if (tot == stop_at):
             #     break
