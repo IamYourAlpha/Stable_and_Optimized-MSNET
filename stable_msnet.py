@@ -40,6 +40,10 @@ import models.cifar as models
 from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, \
 calculate_matrix, make_list_for_plots, to_csv, imshow
 from ms_net_utils import *
+from data_utils import *
+
+
+
 parser = argparse.ArgumentParser(description='Stable MS-NET')
 
 # Hyper-parameters
@@ -49,7 +53,7 @@ parser.add_argument('--test-batch', default=32, type=int, metavar='N',
                     help='test batchsize')
 
 
-parser.add_argument('--schedule', type=int, nargs='+', default=[10, 20],
+parser.add_argument('--schedule', type=int, nargs='+', default=[20, 40],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--train_end_to_end', action='store_true',
                     help='train from router to experts')
@@ -60,7 +64,7 @@ parser.add_argument('--router_epochs', type=int, default=10, metavar='N',
 
 parser.add_argument('--corrected_images', type=str, default='./corrected_images/')
 ###############################################################################
-parser.add_argument('--expert_epochs', type=int, default=1, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=60, metavar='N',
                     help='number of epochs to train experts')
 ##########################################################################
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
@@ -78,7 +82,7 @@ parser.add_argument('--seed', type=int, default=10, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=20, metavar='N',
                     help='how many batches to wait before logging training status')
-parser.add_argument('-d', '--dataset', default='cifar10', type=str)
+
 parser.add_argument('--evaluate_only_router', action='store_true',
                     help='evaluate router on testing set')
 
@@ -93,7 +97,7 @@ parser.add_argument('--train_mode', action='store_true', default=True, help='Do 
 
 parser.add_argument('--alpha_prob', type=int, default=10, help='alpha probability')
 
-parser.add_argument('--topk', type=int, default=2, metavar='N',
+parser.add_argument('--topk', type=int, default=10, metavar='N',
                     help='how many experts you want?')
 ###########################################################################
 
@@ -101,9 +105,11 @@ parser.add_argument('-c', '--checkpoint', default='checkpoint', type=str, metava
                     help='path to save checkpoint (default: checkpoint)')
 
 
+parser.add_argument('-d', '--dataset', default='cifar10', type=str)
 # Architecture details
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet',
                     help='backbone architecture')
+
 parser.add_argument('--depth', type=int, default=8, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock')
 parser.add_argument('--learning_rate', type=float, default=0.1, metavar='LR',
@@ -249,137 +255,148 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         
     return best_so_far, now_correct 
     
-def prepare_dataset_for_router():
+# def prepare_dataset_for_router():
     
-    print('==> Preparing dataset %s' % args.dataset)
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+#     print('==> Preparing dataset %s' % args.dataset)
+#     transform_train = transforms.Compose([
+#         transforms.RandomCrop(32, padding=4),
+#         transforms.RandomHorizontalFlip(),
+#         transforms.ToTensor(),
+#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+#     ])
 
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+#     transform_test = transforms.Compose([
+#         transforms.ToTensor(),
+#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+#     ])
     
-    if args.dataset == 'cifar10':
-        dataloader = datasets.CIFAR10
-        num_classes = 10
-    else:
-        dataloader = datasets.CIFAR100
-        num_classes = 100
+#     if args.dataset == 'cifar10':
+#         dataloader = datasets.CIFAR10
+#         num_classes = 10
+#     else:
+#         dataloader = datasets.CIFAR100
+#         num_classes = 100
     
     
-    trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
-    trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=False, num_workers=args.workers)
+#     trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
+#     trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=False, num_workers=args.workers)
 
-    testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
-    testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+#     testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
+#     testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
     
 
-    testloader_single = data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=args.workers)
+#     testloader_single = data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=args.workers)
  
     
-    return trainloader, testloader, num_classes, testloader_single
+#     return trainloader, testloader, num_classes, testloader_single
 
 
-def prepeare_dataset_for_experts(matrix, values):
+# def prepeare_dataset_for_experts(matrix, values):
     
-    ''' there are two options , either use fixed sampler or 
-    use weighted sampler. The purpose of fixed sampler is just
-    to sample from specific classes, however with weighted sampler
-    we can sampler from all the classes with weight. We can put more
-    weight of the expert classes.
-    '''
-    
-    
-    print('==> Preparing dataset %s' % args.dataset)
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        transforms.RandomErasing(probability = args.p, sh = args.sh, r1 = args.r1, ),
-    ])
+#     ''' note: there are two options , either use fixed sampler or 
+#     use weighted sampler. The purpose of fixed sampler is just
+#     to sample from specific classes, however with weighted sampler
+#     we can sampler from all the classes with weight. We can put more
+#     weight of the expert classes.
+#     params ----
+#     matrix: interclass correlation/confusing class matrix
+#     values: valus correpdonding to the matrix
 
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+#     return ----
     
-    if args.dataset == 'cifar10':
-        dataloader = datasets.CIFAR10
-    else:
-        dataloader = datasets.CIFAR100
+#     '''
     
     
-    train_set = dataloader(root='./data', train=True, download=True, transform=transform_train)
-    test_set = dataloader(root='./data', train=False, download=False, transform=transform_test)
+#     print('==> Preparing dataset %s' % args.dataset)
+#     transform_train = transforms.Compose([
+#         transforms.RandomCrop(32, padding=4),
+#         transforms.RandomHorizontalFlip(),
+#         transforms.ToTensor(),
+#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+#         transforms.RandomErasing(probability = args.p, sh = args.sh, r1 = args.r1, ),
+#     ])
+
+#     transform_test = transforms.Compose([
+#         transforms.ToTensor(),
+#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+#     ])
     
-    class_sample_count = np.array([len(np.where(train_set.targets == t)[0]) \
-                                       for t in np.unique(train_set.targets)])
+#     if args.dataset == 'cifar10':
+#         dataloader = datasets.CIFAR10
+#     else:
+#         dataloader = datasets.CIFAR100
     
-    train_loader_expert = {}
-    test_loader_expert = {}
-    list_of_index = []
-    args.weighted_sampler = True
-    if (args.weighted_sampler):
-        print ("***************Preparing weighted sampler ********************************")
-        for sub in matrix:
+    
+#     train_set = dataloader(root='./data', train=True, download=True, transform=transform_train)
+#     test_set = dataloader(root='./data', train=False, download=False, transform=transform_test)
+    
+#     class_sample_count = np.array([len(np.where(train_set.targets == t)[0]) \
+#                                        for t in np.unique(train_set.targets)])
+    
+#     train_loader_expert = {}
+#     test_loader_expert = {}
+#     list_of_index = []
+#     args.weighted_sampler = False
+#     if (args.weighted_sampler):
+#         print ("***************Preparing weighted sampler ********************************")
+#         for sub in matrix:
+#             weight = class_sample_count / class_sample_count
+#             for sb in sub:
+#                 weight[sb] *= 15
+#             samples_weight = np.array([weight[t] for t in train_set.targets])
+#             samples_weight = torch.from_numpy(samples_weight)
+#             print ("Samples weight: {} and \n shape: {}".format(samples_weight, len(samples_weight)))
+        
+#             sampler_ = WeightedRandomSampler(samples_weight, len(samples_weight))
+
+#             index = ""
+#             for i, sb in enumerate(sub):
+#                 index += str(sb)
+#                 if (i < len(sub)-1):
+#                     index += "_"
+#             print ("The subs are: {}".format(index))
             
-            weight = class_sample_count / class_sample_count
-            weight[sub[0]] *= 15#alpha can be the function of counts
-            weight[sub[1]] *= 15#alpha means how much emphasis we put on the weighting of samples
-            # from experts class.
             
-            samples_weight = np.array([weight[t] for t in train_set.targets])
-            samples_weight = torch.from_numpy(samples_weight)
-            print ("Samples weight: {} and \n shape: {}".format(samples_weight, len(samples_weight)))
-              
+#             train_loader_expert[index] = torch.utils.data.DataLoader(
+#                                      train_set,
+#                                      batch_size=args.train_batch,
+#                                      sampler = sampler_)
             
-            sampler_ = WeightedRandomSampler(samples_weight, len(samples_weight))
+#             indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
             
-            
-            index = str(sub[0]) + "_" + str(sub[1])
-            print ("The subs are {} and {}:".format(sub[0], sub[1]))
-            
-            
-            train_loader_expert[index] = torch.utils.data.DataLoader(
-                                     train_set,
-                                     batch_size=args.train_batch,
-                                     sampler = sampler_)
-            
-            indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
-            
-            test_loader_expert[index] = torch.utils.data.DataLoader(
-                                     test_set,
-                                     batch_size=args.test_batch,
-                                     sampler = SubsetRandomSampler(indices_test))
-            list_of_index.append(index)
+#             test_loader_expert[index] = torch.utils.data.DataLoader(
+#                                      test_set,
+#                                      batch_size=args.test_batch,
+#                                      sampler = SubsetRandomSampler(indices_test))
+#             list_of_index.append(index)
         
         
-        return train_loader_expert, test_loader_expert, list_of_index
+#         return train_loader_expert, test_loader_expert, list_of_index
  
-    # if subsetRandomSampler
-    else:
-        for sub in matrix: 
-            indices_train = [i for i,e in enumerate(train_set.targets) if e in sub] 
-            indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
-            index = str(sub[0]) + "_" + str(sub[1])
-            print ("The subs are {} and {}:".format(sub[0], sub[1]))
-            train_loader_expert[index] = torch.utils.data.DataLoader(
-                                     train_set,
-                                     batch_size=args.train_batch,
-                                     sampler = SubsetRandomSampler(indices_train))
-            test_loader_expert[index] = torch.utils.data.DataLoader(
-                                     test_set,
-                                     batch_size=args.test_batch,
-                                     sampler = SubsetRandomSampler(indices_test))
-            list_of_index.append(index)
+#     # if subsetRandomSampler
+#     else:
+#         for sub in matrix: 
+#             indices_train = [i for i,e in enumerate(train_set.targets) if e in sub] 
+#             indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
+            
+#             index = ""
+#             for i, sb in enumerate(sub):
+#                 index += str(sb)
+#                 if (i < len(sub)-1):
+#                     index += "_"
+#             print ("The subs are: {}".format(index))
+            
+#             train_loader_expert[index] = torch.utils.data.DataLoader(
+#                                      train_set,
+#                                      batch_size=args.train_batch,
+#                                      sampler = SubsetRandomSampler(indices_train))
+#             test_loader_expert[index] = torch.utils.data.DataLoader(
+#                                      test_set,
+#                                      batch_size=args.test_batch,
+#                                      sampler = SubsetRandomSampler(indices_test))
+#             list_of_index.append(index)
     
-        return train_loader_expert, test_loader_expert, list_of_index
+#         return train_loader_expert, test_loader_expert, list_of_index
 
 
 def make_router_and_optimizer(num_classes, load_weights=False):
@@ -419,7 +436,7 @@ def load_expert_networks_and_optimizers(model, lois, num_classes):
         if (args.finetune_experts):
             eoptimizers[loi] = optim.SGD([{'params': experts[loi].layer1.parameters(), 'lr': 0.0001},
                                         {'params': experts[loi].layer2.parameters(), 'lr': 0.0001},
-                                         {'params': experts[loi].layer3.parameters(), 'lr': 0.0001},
+                                         {'params': experts[loi].layer3.parameters(), 'lr': 0.01},
                                          {'params': experts[loi].fc.parameters()}],
                                          lr=0.01, momentum=0.9, weight_decay=5e-4)
             
@@ -513,7 +530,7 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
             if (target_string in exp):
                 router_confident = False
                 list_of_experts.append(exp)
-                break
+                #break
 
         if (router_confident):
             if (preds[0] == target.cpu().numpy()[0]):
@@ -563,12 +580,13 @@ def inference_with_experts_and_routers(test_loader, experts, router, topk=2):
                     imshow(data_numpy, os.path.join(args.corrected_images, f_name), \
                         fexpertpred=class_rev[final_pred], fexpertconf=final_conf, \
                             frouterpred=class_rev[preds[0]], frouterconf=confs[0])
+                    
             
     print ("Router and experts agrees with {} samplers \n and router and experts disagres for {}".format(agree, disagree))        
     print ("Routers: {} \n Experts: {}".format(by_router, by_experts))
     print ("Mistakes by Routers: {} \n Mistakes by Experts: {}".format(mistake_by_router, mistake_by_experts))
     print (expert_count)
-    
+    print (correct)
     return correct, freqMat, disagree
 
 def ensemble_inference(test_loader, experts, router):
@@ -614,42 +632,39 @@ def adjust_learning_rate(epoch, optimizer):
             print ("Lr {}".format(param['lr']))
 
 def main():
+
     global best_acc
     if not os.path.isdir(args.checkpoint):
         os.makedirs(args.checkpoint)
     
-    train_loader_router, test_loader_router, num_classes, test_loader_single = prepare_dataset_for_router()
+    train_loader_router, test_loader_router, num_classes, test_loader_single = prepare_dataset_for_router(args.dataset, \
+        args.train_batch, args.test_batch)
     
     print("==> creating model")
     
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
+    size_of_router = sum(p.numel() for p in router.parameters() if p.requires_grad == True)
+    print ("Network size {:.2f}M".format(size_of_router/1000000))
     
-    # end to end training --> includued training router too
-    # if (args.train_end_to_end):
-    #     best_so_far = 0.0
-    #     for epoch in range(1, args.router_epochs + 1):
-    #         router, roptimizer = train(epoch, router, train_loader_router, None, roptimizer, None, stocastic_loss=False)
-    #         best_so_far = test(router, test_loader_router, best_so_far)
 
-    
-    matrix = np.array(calculate_matrix(router, test_loader_single, num_classes, args.cuda, only_top2=True), dtype=int)
+    matrix = np.array(calculate_matrix(router, test_loader_single, num_classes, args.cuda, only_top2=False), dtype=int)
     print ("Calculating the heatmap for confusing class .....\n")
     ls = np.arange(num_classes)
     heatmap(matrix, ls, ls) # show heatmap
-    matrix_args, values = return_topk_args_from_heatmap(matrix, num_classes, args.topk)
+    matrix_args, values = return_topk_args_from_heatmap(matrix, num_classes, args.topk, binary_=False)
    
     print ("*"*50)
     for mat in matrix_args:
         print (mat)
-    print (values)
     print ("*"*50)
     
-    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(matrix_args, values)
-
+    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(args.dataset, matrix_args, values, \
+                                                                    args.train_batch, args.test_batch, weighted_sampler=False)
+    print (lois)
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois, num_classes)
     teacher = load_teacher_network()
     
-    #args.evaluate_only_router = True
+    args.evaluate_only_router = False
     if (args.evaluate_only_router):
         test(router, test_loader_router, best_so_far=None, name='_', save_wts=False)
         return
@@ -657,13 +672,11 @@ def main():
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
     indexes=['_test_experts', '_test_all']
-    
     plot = {}
-
     plots, lst = make_list_for_plots(lois, plot, indexes)       
     bernouli = get_bernouli_list(args.alpha_prob)
     
-    args.train_mode = True
+    args.train_mode = False
     if (args.train_mode):
         print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
         for loi in lois:
@@ -674,7 +687,6 @@ def main():
                 experts[loi], eoptmizers[loi] = train(epoch, \
                         experts[loi], teacher, expert_train_dataloaders[loi],\
                             train_loader_router, eoptmizers[loi], bernouli, stocastic_loss=False)
-
                 best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
                                     best_so_far, loi, save_wts=True)
                 
@@ -692,16 +704,16 @@ def main():
         numberOfexperts_typeofexperts_w/woKD
         '''
         #filename = 'oracle_resnet110_stocasticloss_fine_tuning_weightedsampler_cifar_100.csv'
-    filename = 'test.csv'
-    to_csv(plots, filename)
+    #filename = 'test.csv'
+    #to_csv(plots, filename)
     router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
     
     
     print ("*" * 50)
     best_so_far = 0
     base_location = 'checkpoint_experts'
-    #pth_folder = ''
-    pth_folder = 'cybercon/%s/r%s'%(args.dataset, args.depth)
+    pth_folder = ''
+    #pth_folder = 'cybercon/%s/r%s'%(args.dataset, args.depth)
     
     for loi in lois:
         _, temp = test(router, expert_test_dataloaders[loi], best_so_far, "router", save_wts=False)
@@ -716,7 +728,7 @@ def main():
     print ("Setting up to performance inference with experts and routers .... \n")
     topk = 2
     accuracy_exp, m, disagree = inference_with_experts_and_routers(test_loader_single, experts, router, topk)
-    #heatmap(m, ls, ls)
+    heatmap(m, ls, ls)
     _, accuracy_router = test(router, test_loader_router, best_so_far, "router", save_wts=False)
     print ("Performance ---> Router ACC: {} \n ....  Oracle Experts: {}\n".format(accuracy_router, accuracy_exp))
     print ("Actual performance of experts: {}".format(accuracy_router + disagree))

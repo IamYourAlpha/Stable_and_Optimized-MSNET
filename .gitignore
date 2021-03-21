@@ -26,3 +26,6 @@
 /corrected_images/
 *.tar
 /checkpoint_experts/
+
+*.txt
+
