@@ -28,8 +28,18 @@ def sort_by_value(dict_, reverse=False):
                                 reverse=True, key=lambda item: item[1])}
     return dict_tuple_sorted
 
-def return_topk_args_from_heatmap(matrix, n, topk):
-    
+def return_topk_args_from_heatmap(matrix, n, topk, binary_=True):
+    ''' 
+    params ---- 
+    matrix: interclass correlation matrix
+    n: No of classes in dataset
+    topk: How many expert do you want?
+
+    return ----
+    new_tuple: tuples of classes that are confusing to the router network
+    value_of_tuple: Value corresponding to each tuples.
+    '''
+
     visited = np.zeros((n,n))
     tuple_list = []
     value_of_tuple = []
@@ -49,21 +59,38 @@ def return_topk_args_from_heatmap(matrix, n, topk):
         tuple_list.append([sub_1, sub_2])
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
-            return tuple_list, value_of_tuple
-    
-#    new_tuple = []
-#    
-#    for keys in tuple_list:
-#        key1, key2 =  keys
-#        for i in range(0, n):
-#            if (matrix[key1][i] > 0 or matrix[i][key1]>0):
-#                new_tuple.append([key1, i])
-#
-#            if (matrix[key2][i] > 0 or matrix[i][key2]>0):
-#                new_tuple.append([key2, i])
-#        break
-        
-   # return new_tuple, value_of_tuple
+            break
+    if (binary_):
+        return tuple_list, value_of_tuple
+    ''' if not binary we go further and 
+    return more expert classes
+    '''
+    new_tuple = tuple_list.copy()
+    for keys in tuple_list:
+        key1, key2 =  keys
+        temp1 = set()
+        temp2 = set()
+        temp1.add(key1)
+        temp1.add(key2)
+        temp2.add(key2)
+        temp2.add(key1)
+        for keys2 in tuple_list:
+            if (key1 in keys2):
+                first_elem, second_elem = keys2
+                temp1.add(first_elem)
+                temp1.add(second_elem)
+
+        for keys2 in tuple_list:
+            if (key2 in keys2):
+                first_elem, second_elem = keys2
+                temp1.add(first_elem)
+                temp1.add(second_elem)
+        if (len(temp1)>2 and (list(temp1) not in tuple_list and list(temp1) not in new_tuple)):
+            new_tuple.append(list(temp1))
+        if (len(temp2)>2 and (list(temp2) not in tuple_list and list(temp2) not in new_tuple)):
+            new_tuple.append(list(temp2))
+
+    return new_tuple, value_of_tuple
     #return tuple_list, value_of_tuple
 
 def heatmap(data, row_labels, col_labels, ax=None,
