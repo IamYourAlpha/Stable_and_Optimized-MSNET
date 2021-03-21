@@ -127,20 +127,14 @@ parser.add_argument('-gpu', '--gpu_id', default=0, type=str, help='set gpu numbe
 parser.add_argument('--p', default=0.3, type=float, help='Random Erasing probability')
 parser.add_argument('--sh', default=0.3, type=float, help='max erasing area')
 parser.add_argument('--r1', default=0.3, type=float, help='aspect of erasing area')
-    
 args = parser.parse_args()
 
 state = {k: v for k, v in args._get_kwargs()}
-
 state = str(state)
-
 with open('state.txt', 'w') as f:
     f.write(state)
 f.close()
-
 model_weights = {}
-
-
 use_cuda = torch.cuda.is_available()
 
 
@@ -254,150 +248,6 @@ def test(model, test_loader, best_so_far, name, save_wts=False):
         best_so_far = now_correct
         
     return best_so_far, now_correct 
-    
-# def prepare_dataset_for_router():
-    
-#     print('==> Preparing dataset %s' % args.dataset)
-#     transform_train = transforms.Compose([
-#         transforms.RandomCrop(32, padding=4),
-#         transforms.RandomHorizontalFlip(),
-#         transforms.ToTensor(),
-#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-#     ])
-
-#     transform_test = transforms.Compose([
-#         transforms.ToTensor(),
-#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-#     ])
-    
-#     if args.dataset == 'cifar10':
-#         dataloader = datasets.CIFAR10
-#         num_classes = 10
-#     else:
-#         dataloader = datasets.CIFAR100
-#         num_classes = 100
-    
-    
-#     trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
-#     trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=False, num_workers=args.workers)
-
-#     testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
-#     testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
-    
-
-#     testloader_single = data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=args.workers)
- 
-    
-#     return trainloader, testloader, num_classes, testloader_single
-
-
-# def prepeare_dataset_for_experts(matrix, values):
-    
-#     ''' note: there are two options , either use fixed sampler or 
-#     use weighted sampler. The purpose of fixed sampler is just
-#     to sample from specific classes, however with weighted sampler
-#     we can sampler from all the classes with weight. We can put more
-#     weight of the expert classes.
-#     params ----
-#     matrix: interclass correlation/confusing class matrix
-#     values: valus correpdonding to the matrix
-
-#     return ----
-    
-#     '''
-    
-    
-#     print('==> Preparing dataset %s' % args.dataset)
-#     transform_train = transforms.Compose([
-#         transforms.RandomCrop(32, padding=4),
-#         transforms.RandomHorizontalFlip(),
-#         transforms.ToTensor(),
-#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-#         transforms.RandomErasing(probability = args.p, sh = args.sh, r1 = args.r1, ),
-#     ])
-
-#     transform_test = transforms.Compose([
-#         transforms.ToTensor(),
-#         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-#     ])
-    
-#     if args.dataset == 'cifar10':
-#         dataloader = datasets.CIFAR10
-#     else:
-#         dataloader = datasets.CIFAR100
-    
-    
-#     train_set = dataloader(root='./data', train=True, download=True, transform=transform_train)
-#     test_set = dataloader(root='./data', train=False, download=False, transform=transform_test)
-    
-#     class_sample_count = np.array([len(np.where(train_set.targets == t)[0]) \
-#                                        for t in np.unique(train_set.targets)])
-    
-#     train_loader_expert = {}
-#     test_loader_expert = {}
-#     list_of_index = []
-#     args.weighted_sampler = False
-#     if (args.weighted_sampler):
-#         print ("***************Preparing weighted sampler ********************************")
-#         for sub in matrix:
-#             weight = class_sample_count / class_sample_count
-#             for sb in sub:
-#                 weight[sb] *= 15
-#             samples_weight = np.array([weight[t] for t in train_set.targets])
-#             samples_weight = torch.from_numpy(samples_weight)
-#             print ("Samples weight: {} and \n shape: {}".format(samples_weight, len(samples_weight)))
-        
-#             sampler_ = WeightedRandomSampler(samples_weight, len(samples_weight))
-
-#             index = ""
-#             for i, sb in enumerate(sub):
-#                 index += str(sb)
-#                 if (i < len(sub)-1):
-#                     index += "_"
-#             print ("The subs are: {}".format(index))
-            
-            
-#             train_loader_expert[index] = torch.utils.data.DataLoader(
-#                                      train_set,
-#                                      batch_size=args.train_batch,
-#                                      sampler = sampler_)
-            
-#             indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
-            
-#             test_loader_expert[index] = torch.utils.data.DataLoader(
-#                                      test_set,
-#                                      batch_size=args.test_batch,
-#                                      sampler = SubsetRandomSampler(indices_test))
-#             list_of_index.append(index)
-        
-        
-#         return train_loader_expert, test_loader_expert, list_of_index
- 
-#     # if subsetRandomSampler
-#     else:
-#         for sub in matrix: 
-#             indices_train = [i for i,e in enumerate(train_set.targets) if e in sub] 
-#             indices_test = [j for j,k in enumerate(test_set.targets) if k in sub]
-            
-#             index = ""
-#             for i, sb in enumerate(sub):
-#                 index += str(sb)
-#                 if (i < len(sub)-1):
-#                     index += "_"
-#             print ("The subs are: {}".format(index))
-            
-#             train_loader_expert[index] = torch.utils.data.DataLoader(
-#                                      train_set,
-#                                      batch_size=args.train_batch,
-#                                      sampler = SubsetRandomSampler(indices_train))
-#             test_loader_expert[index] = torch.utils.data.DataLoader(
-#                                      test_set,
-#                                      batch_size=args.test_batch,
-#                                      sampler = SubsetRandomSampler(indices_test))
-#             list_of_index.append(index)
-    
-#         return train_loader_expert, test_loader_expert, list_of_index
-
 
 def make_router_and_optimizer(num_classes, load_weights=False):
 
