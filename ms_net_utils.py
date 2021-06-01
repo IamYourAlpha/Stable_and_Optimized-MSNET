@@ -60,6 +60,7 @@ def return_topk_args_from_heatmap(matrix, n, topk, binary_=True):
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
             break
+    binary_ = False
     if (binary_):
         return tuple_list, value_of_tuple
     ''' if not binary we go further and 
@@ -177,10 +178,11 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda, only_top2=Tru
             #     break
     return freqMat
 
-def imshow(img, f_name, fexpertpred=None, fexpertconf=None, frouterpred=None, frouterconf=None):
+def imshow(img, f_name, f_name_no_text, fexpertpred=None, fexpertconf=None, frouterpred=None, frouterconf=None):
     img = img / 2 + 0.5     # unnormalize
     npimg = img.numpy() # pytorch tensor is usually (n, C(0), H(1), W(2))
     plt.imshow(np.transpose(npimg, (1, 2, 0))) # numpy needs (H(1), W(2), C(0))
+    plt.savefig(f_name_no_text)
     pred = str(fexpertpred)
     conf = str(fexpertconf)
     pred_r = str(frouterpred)
