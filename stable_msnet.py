@@ -200,7 +200,7 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
             #alp = random.choice(bernouli)
             output_teacher = teacher(dta) # disable knowledge dist.
             output_teacher = output_teacher.detach()
-            loss = loss_fn(output, target, output_teacher, T=3, alpha=0.2)
+            loss = loss_fn(output, target, output_teacher, T=2, alpha=0.5)
             #loss_ce = F.cross_entropy(output, target)
             #loss = alp * loss_kd + (1-alp) * loss_ce
         else:
