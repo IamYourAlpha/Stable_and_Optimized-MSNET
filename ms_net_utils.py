@@ -60,7 +60,6 @@ def return_topk_args_from_heatmap(matrix, n, topk, binary_=True):
         value_of_tuple.append(v)
         if (len(tuple_list) == topk):
             break
-    binary_ = False
     if (binary_):
         return tuple_list, value_of_tuple
     ''' if not binary we go further and 
