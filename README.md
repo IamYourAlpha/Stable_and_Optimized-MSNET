@@ -1,3 +1,3 @@
-# Stable_and_Optimized-MSNET (Modular Selective Network)
-This is an on-going research on making MS-Net much for 
-optimized in terms of accuracy and speed.
+# Stabilization of the Modular Selective Neural Network Model Based on Inter-Class Correlatio
+## Abstract:
+*We propose an optimization of Modular Selective Network or MS-Net by reducing the number of expert network evaluations. MS-Net is composed of a router and a set of expert networks. In our original proposal, MS-Net is constructed based on a Round-Robin dataset partition with controlled redundancy among the subsets of classes. In this paper, we propose a novel way for reducing the inference cost by performing Inter-Class-Correlation (ICC) analysis through calculating the joint-probability of appearance of top-2 classes in router's prediction. Next, we construct subset of classes on the most frequently occurring class pairs and train experts on those subsets. We do not enforce redundancy in these subsets, thus during inference, only one expert is leveraged per sample. Our empirical results show that, with the ResNet-20 backbone, the optimized MS-Net reduces parameter utilization by over 70% yet performs with neck and neck score with the original MS-Net for CIFAR-10 and CIFAR-100 dataset.*
