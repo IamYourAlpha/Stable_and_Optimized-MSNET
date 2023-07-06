@@ -93,6 +93,7 @@ def prepeare_dataset_for_experts(dataset_, matrix, values, train_batch, test_bat
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
+        transforms.RandAugment(),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         transforms.RandomErasing(probability = 0.5, sh = 0.4, r1 = 0.3, ),

@@ -133,9 +133,10 @@ def heatmap(data, row_labels, col_labels, ax=None,
     plt.show()
     if not os.path.exists('checkpoint/figures/'):
         os.makedirs('checkpoint/figures/')
-    #figure_name = 'checkpoint/figures/heatmap_%s.png'%str(depth)
-    #plt.savefig(figure_name)
+    # figure_name = 'checkpoint/figures/heatmap_%s.png'%str(depth)
+    # plt.savefig(figure_name)
     return im, cbar
+
 
 def make_list_for_plots(lois, plot, indexes):
     lst = []
@@ -147,8 +148,10 @@ def make_list_for_plots(lois, plot, indexes):
     
     return plot, lst
 
+
 def calculate_matrix(model, test_loader_single, num_classes, cuda, only_top2=True):
     model.eval()
+    model.cuda()
     stop_at = 100
     tot = 0
     freqMat = np.zeros((num_classes, num_classes))
@@ -172,10 +175,11 @@ def calculate_matrix(model, test_loader_single, num_classes, cuda, only_top2=Tru
                     d = target.cpu().numpy()[0]
                     freqMat[s][d] += 1
                     freqMat[d][s] += 1
-            #     tot = tot + 1    
-            # if (tot == stop_at):
-            #     break
+                tot = tot + 1    
+            if (tot == stop_at):
+                break
     return freqMat
+
 
 def imshow(img, f_name, f_name_no_text, fexpertpred=None, fexpertconf=None, frouterpred=None, frouterconf=None):
     img = img / 2 + 0.5     # unnormalize
@@ -192,14 +196,17 @@ def imshow(img, f_name, f_name_no_text, fexpertpred=None, fexpertconf=None, frou
         bbox={'facecolor': 'red', 'alpha': 0.5, 'pad': 10})
     plt.savefig(f_name)
     plt.close()
-    
+
+
 def save_checkpoint(model_weights, is_best, filename='checkpoint.pth.tar'):
+    if (not os.path.exists("checkpoint_experts")):
+        os.mkdir("checkpoint_experts")
     filepath = os.path.join("checkpoint_experts", filename)
-    print (filepath)
     #torch.save(model_weights, filepath)
     if is_best:
         torch.save(model_weights, filepath)
         print ("******* Saved New PTH *********")
+
 
 def to_csv(plots, name):  
     data_ = pd.DataFrame.from_dict(plots)

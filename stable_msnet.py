@@ -33,16 +33,17 @@ import numpy as np
 import pandas as pd
 import torch.utils.data as data
 import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report
-from sklearn.metrics import confusion_matrix
+# from sklearn.metrics import classification_report
+# from sklearn.metrics import confusion_matrix
 from torch.optim.lr_scheduler import StepLR
 # models
 import models.cifar as models
 
-from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, \
-calculate_matrix, make_list_for_plots, to_csv, imshow
-from ms_net_utils import *
-from data_utils import *
+# from ms_net_utils import return_topk_args_from_heatmap, heatmap, save_checkpoint, calculate_matrix,  make_list_for_plots, 
+#     to_csv, 
+#     imshow
+from utils.ms_net_utils import *
+from utils.data_utils import *
 
 
 
@@ -66,7 +67,7 @@ parser.add_argument('--router_epochs', type=int, default=10, metavar='N',
 
 parser.add_argument('--corrected_images', type=str, default='./corrected_images/')
 ###############################################################################
-parser.add_argument('--expert_epochs', type=int, default=60, metavar='N',
+parser.add_argument('--expert_epochs', type=int, default=10, metavar='N',
                     help='number of epochs to train experts')
 ##########################################################################
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
@@ -140,6 +141,7 @@ f.close()
 model_weights = {}
 use_cuda = torch.cuda.is_available()
 
+
 classes = {'airplane': 0, 'automobile': 1, 'bird': 2, 'cat': 3,
            'deer': 4, 'dog': 5, 'frog': 6, 'horse': 7, 'ship': 8, 'truck': 9}
 
@@ -169,6 +171,7 @@ def distillation(y, labels, teacher_scores, T, alpha):
                         F.softmax(teacher_scores/T, dim=1)) \
                         * (T*T * 2.0 * alpha) + F.cross_entropy(y, labels) * (1. - alpha)
 
+
 def get_bernouli_list(alpha_prob):
     bernouli = []
     for i in range(alpha_prob):
@@ -176,6 +179,7 @@ def get_bernouli_list(alpha_prob):
     for i in range(alpha_prob, 100):
         bernouli.append(0) 
     return bernouli
+
 
 def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer, bernouli, stocastic_loss=False): 
     model.train()
@@ -192,7 +196,6 @@ def train(epoch, model, teacher, train_loader, train_loader_all_data, optimizer,
         dta, target = Variable(dta), Variable(target)
         #dta_all, target_all = Variable(dta_all), Variable(target_all)
         optimizer.zero_grad()
-        
         output = model(dta)
         #output_all = model(dta)
 
@@ -278,7 +281,7 @@ def make_router_and_optimizer(num_classes, load_weights=False):
 def load_expert_networks_and_optimizers(model, lois, num_classes):
     experts = {}
     eoptimizers = {}
-    chk = torch.load('./ck_backup/%s/%s-depth-%s/checkpoint/model_best.pth.tar'%(args.dataset, args.arch, args.depth))
+    #chk = torch.load('./ck_backup/%s/%s-depth-%s/checkpoint/model_best.pth.tar'%(args.dataset, args.arch, args.depth))
     for loi in lois:
         experts[loi] = models.__dict__[args.arch](
                     num_classes=num_classes,
@@ -287,7 +290,7 @@ def load_expert_networks_and_optimizers(model, lois, num_classes):
         
         experts[loi] = experts[loi].cuda()
         
-        args.initialize_with_router = True
+        args.initialize_with_router = False
         if (args.initialize_with_router):
             experts[loi].load_state_dict(chk['state_dict'])
 
@@ -319,8 +322,8 @@ def load_teacher_network():
                     dropRate=0,
                 )
     teacher = torch.nn.DataParallel(teacher).cuda()
-    checkpoint = torch.load("./ck_backup/teachers/resnext_best.pth.tar")
-    teacher.load_state_dict(checkpoint['state_dict'])
+    # checkpoint = torch.load("./ck_backup/teachers/resnext_best.pth.tar")
+    # teacher.load_state_dict(checkpoint['state_dict'])
     return teacher
 
         
@@ -488,7 +491,6 @@ def adjust_learning_rate(epoch, optimizer):
         print ("\n\n***************CHANGED LEARNING RATE TO\n*********************\n")
         for param_group in optimizer.param_groups:
             param_group['lr'] *= 0.1
-        
         for param in optimizer.param_groups:
             print ("Lr {}".format(param['lr']))
 
@@ -503,7 +505,7 @@ def main():
     
     print("==> creating model")
     
-    router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
+    router, roptimizer = make_router_and_optimizer(num_classes, load_weights=False)
     size_of_router = sum(p.numel() for p in router.parameters() if p.requires_grad == True)
     print ("Network size {:.2f}M".format(size_of_router/1000000))
     #########################################################################
@@ -514,31 +516,39 @@ def main():
     heatmap(matrix, ls, ls) # show heatmap
     ####################################################################################################
     matrix_args, values = return_topk_args_from_heatmap(matrix, num_classes, args.topk, binary_=True)
-   
+
     print ("*"*50)
     for mat in matrix_args:
         print (mat)
     print ("*"*50)
     
-    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(args.dataset, matrix_args, values, \
-                                                                    args.train_batch, args.test_batch, weighted_sampler=True)
+    expert_train_dataloaders,  expert_test_dataloaders, lois = prepeare_dataset_for_experts(
+                                                                    args.dataset,
+                                                                    matrix_args, 
+                                                                    values,
+                                                                    args.train_batch, 
+                                                                    args.test_batch, 
+                                                                    weighted_sampler=True)
     print (lois)
     experts, eoptmizers = load_expert_networks_and_optimizers(router, lois, num_classes)
     teacher = load_teacher_network()
     
     args.evaluate_only_router = False
     if (args.evaluate_only_router):
-        test(router, test_loader_router, best_so_far=None, name='_', save_wts=False)
+        test(router, 
+             test_loader_router, 
+             best_so_far=None, 
+             name='_', 
+             save_wts=False)
         return
     
-    router, roptimizer = make_router_and_optimizer(num_classes, load_weights=True)
-    
-    indexes=['_test_experts', '_test_all']
+    router, roptimizer = make_router_and_optimizer(num_classes, load_weights=False)
+    indexes = ['_test_experts', '_test_all']
     plot = {}
     plots, lst = make_list_for_plots(lois, plot, indexes)       
     bernouli = get_bernouli_list(args.alpha_prob)
     
-    args.train_mode = False
+    args.train_mode = True
     if (args.train_mode):
         print ("\n \n {}The value of alpha: {} \n \n ".format("*"*20, args.alpha_prob, "*"*20))
         for loi in lois:
@@ -546,11 +556,20 @@ def main():
             garbage = 99999999
             for epoch in range(1, args.expert_epochs + 1):
                 adjust_learning_rate(epoch, eoptmizers[loi])
-                experts[loi], eoptmizers[loi] = train(epoch, \
-                        experts[loi], router, expert_train_dataloaders[loi],\
-                            train_loader_router, eoptmizers[loi], bernouli, stocastic_loss=True)
-                best_so_far, test_acc_on_expert_data = test(experts[loi], expert_test_dataloaders[loi], \
-                                    best_so_far, loi, save_wts=True)
+                experts[loi], eoptmizers[loi] = train(epoch,
+                                                    experts[loi],
+                                                    router, 
+                                                    expert_train_dataloaders[loi],
+                                                    train_loader_router, 
+                                                    eoptmizers[loi], 
+                                                    bernouli, 
+                                                    stocastic_loss=False)
+
+                best_so_far, test_acc_on_expert_data = test(experts[loi], 
+                                                        expert_test_dataloaders[loi],
+                                                        best_so_far, 
+                                                        loi, 
+                                                        save_wts=True)
                 
                 index = loi + '_test_experts'
                 test_acc_on_expert_data_ = int(test_acc_on_expert_data.cpu().numpy())
